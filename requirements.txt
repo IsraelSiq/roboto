@@ -2,10 +2,9 @@
 python-binance==1.0.19
 
 # === Análise técnica ===
-# pandas 2.2.3+ tem wheel pré-compilada para Python 3.13 no Windows
 pandas==2.2.3
 numpy==2.1.3
-pandas-ta==0.3.14b0
+pandas-ta==0.4.67b0
 
 # === Sentiment analysis ===
 transformers==4.44.2
