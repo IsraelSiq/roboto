@@ -16,12 +16,12 @@ import pandas as pd
 
 from backend.analysis.technical import TechnicalAnalyzer
 from backend.analysis.signals import SignalCombiner, SignalDecision
+from backend.analysis.sentiment import SentimentResult
 from backend.risk.manager import RiskManager, Trade
 from backend.risk.metrics import PerformanceMetrics
 
 logger = logging.getLogger(__name__)
 
-# Candles mínimos para análise técnica
 MIN_CANDLES = 60
 
 
@@ -46,7 +46,7 @@ class BacktestResult:
     total_pnl_pct: float
     approved: bool
     trades: list = field(default_factory=list)
-    equity_curve: list = field(default_factory=list)  # [(timestamp, balance)]
+    equity_curve: list = field(default_factory=list)
 
     def summary(self) -> str:
         status = "✅ APROVADO" if self.approved else "❌ REPROVADO"
@@ -73,14 +73,14 @@ class BacktestEngine:
     """
     Simula o bot sobre dados históricos candle a candle.
 
-    O sentiment é simulado como neutro (sem chamar a API de notícias)
-    para permitir testes rápidos e determinísticos.
+    O sentiment é simulado como SentimentResult real (sem chamar a API de notícias)
+    para permitir backtests rápidos e determinísticos.
 
     Args:
-        symbol:      Par de trading
-        interval:    Timeframe
-        balance:     Saldo inicial
-        only_strong: Apenas sinais FORTES (padrão: True)
+        symbol:          Par de trading
+        interval:        Timeframe
+        balance:         Saldo inicial
+        only_strong:     Apenas sinais FORTES (padrão: True)
         stop_loss_pct:   Stop loss % (padrão: 5.0)
         take_profit_pct: Take profit % (padrão: 10.0)
         sentiment_mode:  'neutral' | 'positive' | 'negative' (padrão: 'neutral')
@@ -108,6 +108,14 @@ class BacktestEngine:
 
         self.ta = TechnicalAnalyzer()
         self.combiner = SignalCombiner(symbol=symbol, timeframe=interval)
+
+        # Sentiment simulado — SentimentResult real (não Mock)
+        self._sentiment = SentimentResult(
+            signal=sentiment_mode,
+            score=0.5,
+            news_count=0,
+            reason=f"backtest/{sentiment_mode}",
+        )
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
         """
@@ -137,7 +145,7 @@ class BacktestEngine:
         start_date = str(df["open_time"].iloc[MIN_CANDLES])
         end_date = str(df["open_time"].iloc[-1])
 
-        logger.info(f"[Backtest] Iniciando {self.symbol} {self.interval} | {len(df)} candles")
+        logger.info(f"[Backtest] Iniciando {self.symbol} {self.interval} | {len(df):,} candles | sentiment={self.sentiment_mode}")
 
         for i in range(MIN_CANDLES, len(df)):
             window = df.iloc[:i+1].copy()
@@ -171,12 +179,9 @@ class BacktestEngine:
                 logger.debug(f"[Backtest] Erro técnico no candle {i}: {e}")
                 continue
 
-            # Sentiment simulado
-            sent = self._make_sentiment(current_price)
-
-            # Combina sinais
+            # Combina com sentiment simulado (SentimentResult real)
             try:
-                decision = self.combiner.combine(tech, sent)
+                decision = self.combiner.combine(tech, self._sentiment)
             except Exception as e:
                 logger.debug(f"[Backtest] Erro ao combinar sinais: {e}")
                 continue
@@ -221,13 +226,3 @@ class BacktestEngine:
 
         logger.info(result.summary())
         return result
-
-    def _make_sentiment(self, price: float):
-        """Cria um objeto de sentiment simulado."""
-        from unittest.mock import MagicMock
-        sent = MagicMock()
-        sent.signal = self.sentiment_mode
-        sent.score = 0.5
-        sent.news_count = 0
-        sent.reason = f"backtest/{self.sentiment_mode}"
-        return sent
