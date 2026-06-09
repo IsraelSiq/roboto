@@ -1,13 +1,18 @@
 """
 Roboto — FastAPI REST
-Expõe endpoints para o dashboard Streamlit e futura integração com Supabase/Vercel.
+Expõe endpoints para o dashboard e integração com Supabase.
 
 Endpoints:
+    GET  /                — health check
     GET  /status          — status do bot (rodando, saldo, drawdown)
-    GET  /signal          — último sinal gerado
-    GET  /trades          — lista de trades fechados
+    GET  /signal          — último sinal gerado (memória)
+    GET  /signals         — histórico de sinais (Supabase)
+    GET  /trades          — trades da sessão atual (memória)
+    GET  /trades/history  — histórico de trades (Supabase)
+    GET  /sessions        — histórico de sessões (Supabase)
     GET  /metrics         — métricas de performance
     GET  /candles         — últimos candles do símbolo
+    GET  /price           — preço atual
     POST /bot/start       — inicia o loop do bot
     POST /bot/stop        — para o loop do bot
     POST /bot/resume      — retoma após pausa por drawdown
@@ -17,9 +22,12 @@ import logging
 import threading
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+import os
 
 from backend.core.bot import RobotoBot
 from backend.market.binance_client import BinanceClient
@@ -39,11 +47,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve o dashboard estático se a pasta existir
+_frontend_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
+if os.path.isdir(_frontend_path):
+    app.mount("/dashboard", StaticFiles(directory=_frontend_path, html=True), name="dashboard")
+
 # Estado global do bot
 _bot: Optional[RobotoBot] = None
 _bot_thread: Optional[threading.Thread] = None
 _last_signal: Optional[dict] = None
 _client = BinanceClient()
+
+# Supabase (lazy init)
+_db = None
+def _get_db():
+    global _db
+    if _db is None:
+        try:
+            from backend.db.supabase_client import SupabaseClient
+            _db = SupabaseClient()
+        except Exception as e:
+            logger.warning(f"Supabase indisponível na API: {e}")
+    return _db
 
 
 # ----------------------------------------------------------
@@ -101,22 +126,34 @@ def get_status():
             "entry_price": ot.entry_price,
             "stop_loss": ot.stop_loss,
             "take_profit": ot.take_profit,
-            "opened_at": ot.opened_at,
+            "opened_at": str(ot.opened_at),
         } if ot else None,
     }
 
 
 @app.get("/signal", tags=["Signals"])
 def get_last_signal():
-    """Último sinal gerado pelo bot."""
+    """Último sinal gerado pelo bot (memória da sessão atual)."""
     if _last_signal is None:
         return {"signal": None, "message": "Nenhum sinal gerado ainda"}
     return _last_signal
 
 
+@app.get("/signals", tags=["Signals"])
+def get_signals(
+    symbol: str = Query("BTCUSDT"),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Histórico de sinais persistidos no Supabase."""
+    db = _get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Supabase indisponível")
+    return {"signals": db.get_last_signals(symbol=symbol, limit=limit)}
+
+
 @app.get("/trades", tags=["Trades"])
 def get_trades():
-    """Lista de todos os trades fechados."""
+    """Trades fechados da sessão atual (memória)."""
     if _bot is None:
         return {"trades": [], "total": 0}
     trades = [
@@ -131,17 +168,47 @@ def get_trades():
             "take_profit": t.take_profit,
             "pnl_pct": t.pnl_pct,
             "result": t.result,
-            "opened_at": t.opened_at,
-            "closed_at": t.closed_at,
+            "opened_at": str(t.opened_at),
+            "closed_at": str(t.closed_at),
         }
         for t in _bot.risk.closed_trades
     ]
     return {"trades": trades, "total": len(trades)}
 
 
+@app.get("/trades/history", tags=["Trades"])
+def get_trades_history(
+    symbol: str = Query("BTCUSDT"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Histórico completo de trades persistidos no Supabase."""
+    db = _get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Supabase indisponível")
+    trades = db.get_trades(symbol=symbol, limit=limit)
+    return {"trades": trades, "total": len(trades)}
+
+
+@app.get("/sessions", tags=["Sessions"])
+def get_sessions():
+    """Histórico de sessões do bot persistidas no Supabase."""
+    db = _get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Supabase indisponível")
+    try:
+        res = db.client.table("bot_sessions") \
+            .select("*") \
+            .order("started_at", desc=True) \
+            .limit(20) \
+            .execute()
+        return {"sessions": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/metrics", tags=["Metrics"])
 def get_metrics():
-    """Métricas de performance."""
+    """Métricas de performance da sessão atual."""
     if _bot is None or not _bot.risk.closed_trades:
         return {"metrics": None, "message": "Sem trades suficientes"}
     from backend.risk.metrics import PerformanceMetrics
@@ -168,14 +235,9 @@ def get_candles(symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100)
         df = _client.get_candles(symbol=symbol, interval=interval, limit=limit)
         if df.empty:
             raise HTTPException(status_code=502, detail="Nenhum candle recebido da Binance")
-        # Coluna correta é open_time (não timestamp)
         df_out = df[["open_time", "open", "high", "low", "close", "volume"]].tail(50).copy()
         df_out["open_time"] = df_out["open_time"].astype(str)
-        return {
-            "candles": df_out.to_dict(orient="records"),
-            "symbol": symbol,
-            "interval": interval,
-        }
+        return {"candles": df_out.to_dict(orient="records"), "symbol": symbol, "interval": interval}
     except HTTPException:
         raise
     except Exception as e:
@@ -199,7 +261,6 @@ def start_bot(config: BotConfig):
     global _bot, _bot_thread
     if _bot and _bot._running:
         return {"status": "already_running", "symbol": _bot.symbol}
-
     _bot = RobotoBot(
         symbol=config.symbol,
         interval=config.interval,

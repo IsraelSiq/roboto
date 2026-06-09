@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Roboto Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; }
+
+    header {
+      background: #1a1d27;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #2a2d3a;
+    }
+    header h1 { font-size: 1.3rem; color: #fff; }
+    .badge {
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge.running  { background: #1a3a1a; color: #4caf50; }
+    .badge.stopped  { background: #3a1a1a; color: #f44336; }
+    .badge.offline  { background: #2a2a1a; color: #ff9800; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      padding: 24px 32px 0;
+    }
+    .card {
+      background: #1a1d27;
+      border-radius: 10px;
+      padding: 18px 20px;
+      border: 1px solid #2a2d3a;
+    }
+    .card .label { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 1.5rem; font-weight: 700; margin-top: 6px; color: #fff; }
+    .card .value.green { color: #4caf50; }
+    .card .value.red   { color: #f44336; }
+    .card .value.yellow{ color: #ff9800; }
+
+    section {
+      margin: 24px 32px;
+      background: #1a1d27;
+      border-radius: 10px;
+      border: 1px solid #2a2d3a;
+      overflow: hidden;
+    }
+    section h2 {
+      padding: 14px 20px;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #aaa;
+      border-bottom: 1px solid #2a2d3a;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th {
+      padding: 10px 16px;
+      text-align: left;
+      color: #666;
+      font-weight: 500;
+      border-bottom: 1px solid #2a2d3a;
+    }
+    td { padding: 10px 16px; border-bottom: 1px solid #1e2130; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1e2235; }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .tag.CALL_FORTE, .tag.WIN  { background:#1a3a1a; color:#4caf50; }
+    .tag.PUT_FORTE,  .tag.LOSS { background:#3a1a1a; color:#f44336; }
+    .tag.CALL_FRACO            { background:#1a2a1a; color:#81c784; }
+    .tag.PUT_FRACO             { background:#2a1a1a; color:#e57373; }
+    .tag.AGUARDAR, .tag.PENDING{ background:#2a2a1a; color:#ff9800; }
+    .tag.negative              { background:#3a1a1a; color:#f44336; }
+    .tag.positive              { background:#1a3a1a; color:#4caf50; }
+    .tag.neutral               { background:#2a2a2a; color:#aaa; }
+
+    .refresh-bar {
+      text-align: center;
+      padding: 10px;
+      font-size: 0.75rem;
+      color: #555;
+    }
+    #countdown { color: #888; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span style="font-size:1.5rem">🤖</span>
+  <h1>Roboto Dashboard</h1>
+  <span id="status-badge" class="badge offline">Carregando...</span>
+</header>
+
+<div class="grid" id="cards">
+  <div class="card"><div class="label">Saldo</div><div class="value" id="c-balance">—</div></div>
+  <div class="card"><div class="label">Drawdown</div><div class="value" id="c-drawdown">—</div></div>
+  <div class="card"><div class="label">Trades Hoje</div><div class="value" id="c-trades-today">—</div></div>
+  <div class="card"><div class="label">Total Trades</div><div class="value" id="c-trades-total">—</div></div>
+  <div class="card"><div class="label">Preço BTC</div><div class="value" id="c-price">—</div></div>
+</div>
+
+<section>
+  <h2>📡 Últimos Sinais</h2>
+  <table>
+    <thead><tr>
+      <th>Hora</th><th>Preço</th><th>RSI</th>
+      <th>Técnico</th><th>Sentiment</th><th>Score</th><th>Decisão</th>
+    </tr></thead>
+    <tbody id="signals-body"><tr><td colspan="7" style="color:#555;padding:20px">Carregando...</td></tr></tbody>
+  </table>
+</section>
+
+<section>
+  <h2>💼 Histórico de Trades</h2>
+  <table>
+    <thead><tr>
+      <th>Direção</th><th>Entrada</th><th>Saída</th>
+      <th>PnL</th><th>Resultado</th><th>Fechado em</th>
+    </tr></thead>
+    <tbody id="trades-body"><tr><td colspan="6" style="color:#555;padding:20px">Carregando...</td></tr></tbody>
+  </table>
+</section>
+
+<div class="refresh-bar">Atualiza em <span id="countdown">30</span>s</div>
+
+<script>
+  const API = 'http://localhost:8000';
+  let timer = 30;
+
+  function fmt(v, digits=2) {
+    if (v == null) return '—';
+    return Number(v).toFixed(digits);
+  }
+  function fmtDate(s) {
+    if (!s) return '—';
+    return new Date(s).toLocaleTimeString('pt-BR');
+  }
+
+  async function loadStatus() {
+    try {
+      const [st, pr] = await Promise.all([
+        fetch(`${API}/status`).then(r => r.json()),
+        fetch(`${API}/price`).then(r => r.json()),
+      ]);
+      const badge = document.getElementById('status-badge');
+      if (st.running) { badge.textContent = '🟢 Rodando'; badge.className = 'badge running'; }
+      else if (st.paused) { badge.textContent = '⏸ Pausado'; badge.className = 'badge offline'; }
+      else { badge.textContent = '⚫ Parado'; badge.className = 'badge stopped'; }
+
+      document.getElementById('c-balance').textContent = st.balance != null ? `$${Number(st.balance).toLocaleString('pt-BR', {minimumFractionDigits:2})}` : '—';
+
+      const dd = document.getElementById('c-drawdown');
+      const ddv = st.drawdown_pct;
+      dd.textContent = ddv != null ? `${fmt(ddv)}%` : '—';
+      dd.className = 'value ' + (ddv > 10 ? 'red' : ddv > 5 ? 'yellow' : 'green');
+
+      document.getElementById('c-trades-today').textContent = st.trades_today ?? '—';
+      document.getElementById('c-trades-total').textContent = st.total_trades ?? '—';
+      document.getElementById('c-price').textContent = pr.price != null ? `$${Number(pr.price).toLocaleString('pt-BR', {minimumFractionDigits:2})}` : '—';
+    } catch(e) {
+      document.getElementById('status-badge').textContent = '⚠ Offline';
+      document.getElementById('status-badge').className = 'badge offline';
+    }
+  }
+
+  async function loadSignals() {
+    try {
+      const { signals } = await fetch(`${API}/signals?limit=10`).then(r => r.json());
+      const tbody = document.getElementById('signals-body');
+      if (!signals || !signals.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="color:#555;padding:20px">Sem sinais ainda</td></tr>';
+        return;
+      }
+      tbody.innerHTML = signals.map(s => `
+        <tr>
+          <td>${fmtDate(s.created_at)}</td>
+          <td>$${fmt(s.current_price)}</td>
+          <td>${fmt(s.rsi)}</td>
+          <td><span class="tag ${s.technical_signal}">${s.technical_signal ?? '—'}</span></td>
+          <td><span class="tag ${s.sentiment_signal}">${s.sentiment_signal ?? '—'}</span></td>
+          <td>${fmt(s.sentiment_score, 3)}</td>
+          <td><span class="tag ${s.final_decision}">${s.final_decision}</span></td>
+        </tr>`).join('');
+    } catch(e) { console.error('signals:', e); }
+  }
+
+  async function loadTrades() {
+    try {
+      const { trades } = await fetch(`${API}/trades/history?limit=20`).then(r => r.json());
+      const tbody = document.getElementById('trades-body');
+      if (!trades || !trades.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="color:#555;padding:20px">Sem trades ainda</td></tr>';
+        return;
+      }
+      tbody.innerHTML = trades.map(t => `
+        <tr>
+          <td><span class="tag ${t.direction}_${t.strength}">${t.direction} ${t.strength}</span></td>
+          <td>$${fmt(t.entry_price)}</td>
+          <td>${t.exit_price ? '$'+fmt(t.exit_price) : '—'}</td>
+          <td class="${t.pnl_pct > 0 ? 'green' : t.pnl_pct < 0 ? 'red' : ''}">${t.pnl_pct != null ? fmt(t.pnl_pct)+'%' : '—'}</td>
+          <td><span class="tag ${t.result}">${t.result ?? 'OPEN'}</span></td>
+          <td>${fmtDate(t.closed_at)}</td>
+        </tr>`).join('');
+    } catch(e) { console.error('trades:', e); }
+  }
+
+  function refresh() {
+    loadStatus();
+    loadSignals();
+    loadTrades();
+    timer = 30;
+  }
+
+  refresh();
+  setInterval(refresh, 30000);
+  setInterval(() => {
+    timer--;
+    document.getElementById('countdown').textContent = timer;
+  }, 1000);
+</script>
+</body>
+</html>
