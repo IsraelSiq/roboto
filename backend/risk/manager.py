@@ -60,12 +60,12 @@ class RiskManager:
     Gerencia risco por trade e por dia.
 
     Args:
-        balance:         Saldo inicial em USDT
-        stop_loss_pct:   Stop loss em % (padrão: 5.0)
-        take_profit_pct: Take profit em % (padrão: 10.0)
-        max_trades_day:  Máx trades por dia (padrão: 10)
+        balance:          Saldo inicial em USDT
+        stop_loss_pct:    Stop loss em % (padrão: 5.0)
+        take_profit_pct:  Take profit em % (padrão: 10.0)
+        max_trades_day:   Máx trades por dia (padrão: 10)
         max_drawdown_pct: Drawdown máximo antes de pausar (padrão: 20.0)
-        only_strong:     Só opera sinais FORTES (padrão: True)
+        only_strong:      Só opera sinais FORTES (padrão: True)
     """
 
     def __init__(
@@ -91,13 +91,25 @@ class RiskManager:
         self._trades: list[Trade] = []
         self._open_trade: Optional[Trade] = None
         self._today_count = 0
-        self._today_date: Optional[date] = date.today()  # inicializa com hoje
+        self._today_date: Optional[date] = None  # inicializado no primeiro can_trade
 
     # ----------------------------------------------------------
     # VERIFICAÇÃO
     # ----------------------------------------------------------
 
-    def can_trade(self, decision: SignalDecision) -> tuple[bool, str]:
+    def can_trade(
+        self,
+        decision: SignalDecision,
+        current_date: Optional[date] = None,
+    ) -> tuple[bool, str]:
+        """
+        Verifica se é possível abrir um novo trade.
+
+        Args:
+            decision:     Decisão do SignalCombiner
+            current_date: Data do candle atual (usar no backtest para reset diário correto).
+                          Se None, usa date.today() (modo live).
+        """
         if self._paused:
             return False, f"Bot pausado: {self._pause_reason}"
 
@@ -110,7 +122,7 @@ class RiskManager:
         if self._open_trade is not None:
             return False, f"Trade aberto em {self._open_trade.symbol} desde {self._open_trade.opened_at}"
 
-        self._reset_daily_count_if_needed()
+        self._reset_daily_count_if_needed(current_date)
         if self._today_count >= self.max_trades_day:
             return False, f"Limite diário atingido ({self._today_count}/{self.max_trades_day})"
 
@@ -125,8 +137,12 @@ class RiskManager:
     # ABRIR TRADE
     # ----------------------------------------------------------
 
-    def open_trade(self, decision: SignalDecision) -> Trade:
-        self._reset_daily_count_if_needed()  # garante que _today_date está inicializado
+    def open_trade(
+        self,
+        decision: SignalDecision,
+        current_date: Optional[date] = None,
+    ) -> Trade:
+        self._reset_daily_count_if_needed(current_date)
 
         price = decision.current_price
         direction = decision.direction()
@@ -255,11 +271,14 @@ class RiskManager:
     def _calc_drawdown(self) -> float:
         if self.peak_balance == 0:
             return 0.0
-        dd = (self.peak_balance - self.balance) / self.peak_balance * 100
-        return max(dd, 0.0)
+        return max((self.peak_balance - self.balance) / self.peak_balance * 100, 0.0)
 
-    def _reset_daily_count_if_needed(self):
-        today = date.today()
+    def _reset_daily_count_if_needed(self, current_date: Optional[date] = None):
+        """Reseta contador diário.
+        No backtest, passa current_date=candle_timestamp.date() para simular corretamente.
+        No modo live, deixa None e usa date.today().
+        """
+        today = current_date or date.today()
         if self._today_date != today:
             self._today_date = today
             self._today_count = 0
@@ -273,9 +292,6 @@ class RiskManager:
         return [t for t in self._trades if not t.is_open()]
 
 
-# ----------------------------------------------------------
-# Teste rápido
-# ----------------------------------------------------------
 if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO)
@@ -297,21 +313,10 @@ if __name__ == "__main__":
         news_count=5,
     )
 
-    print("\n" + "="*50)
-    print("  Roboto — Risk Manager Test")
-    print("="*50)
-
     ok, reason = rm.can_trade(decision)
-    print(f"\nPode operar? {ok} | {reason or 'ok'}")
-
+    print(f"Pode operar? {ok} | {reason or 'ok'}")
     if ok:
         trade = rm.open_trade(decision)
-        print(f"Trade aberto: {trade.id} | SL=${trade.stop_loss:,.2f} | TP=${trade.take_profit:,.2f}")
         rm.close_trade(trade, trade.take_profit)
         print(f"Resultado: {trade.pnl_summary()}")
-
-    status = rm.status()
-    print(f"\nSaldo   : ${status['balance']:,.2f}")
-    print(f"Drawdown: {status['drawdown_pct']:.1f}%")
-    print(f"Trades  : {status['total_trades']}")
-    print(f"Pausado : {status['paused']}")
+    print(f"Status: {rm.status()}")

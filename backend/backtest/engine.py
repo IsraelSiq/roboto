@@ -1,11 +1,6 @@
 """
 Roboto — Backtest Engine
 Roda a estratégia completa (técnico + sentiment simulado) sobre dados históricos.
-
-Uso:
-    engine = BacktestEngine(symbol="BTCUSDT", interval="5m", balance=10000.0)
-    result = engine.run(df)
-    print(result.summary())
 """
 
 import logging
@@ -73,9 +68,6 @@ class BacktestEngine:
     """
     Simula o bot sobre dados históricos candle a candle.
 
-    O sentiment é simulado como SentimentResult real (sem chamar a API de notícias)
-    para permitir backtests rápidos e determinísticos.
-
     Args:
         symbol:          Par de trading
         interval:        Timeframe
@@ -83,7 +75,7 @@ class BacktestEngine:
         only_strong:     Apenas sinais FORTES (padrão: True)
         stop_loss_pct:   Stop loss % (padrão: 5.0)
         take_profit_pct: Take profit % (padrão: 10.0)
-        sentiment_mode:  'neutral' | 'positive' | 'negative' (padrão: 'neutral')
+        sentiment_mode:  'neutral' | 'positive' | 'negative' (padrão: 'positive')
     """
 
     def __init__(
@@ -95,7 +87,7 @@ class BacktestEngine:
         stop_loss_pct: float = 5.0,
         take_profit_pct: float = 10.0,
         max_trades_day: int = 10,
-        sentiment_mode: str = "neutral",
+        sentiment_mode: str = "positive",
     ):
         self.symbol = symbol
         self.interval = interval
@@ -109,7 +101,6 @@ class BacktestEngine:
         self.ta = TechnicalAnalyzer()
         self.combiner = SignalCombiner(symbol=symbol, timeframe=interval)
 
-        # Sentiment simulado — SentimentResult real (não Mock)
         self._sentiment = SentimentResult(
             signal=sentiment_mode,
             score=0.5,
@@ -118,15 +109,6 @@ class BacktestEngine:
         )
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
-        """
-        Executa o backtest sobre o DataFrame de candles.
-
-        Args:
-            df: DataFrame com colunas open_time, open, high, low, close, volume
-
-        Returns:
-            BacktestResult com todas as métricas
-        """
         if df.empty or len(df) < MIN_CANDLES:
             raise ValueError(f"DataFrame insuficiente: {len(df)} candles (mínimo: {MIN_CANDLES})")
 
@@ -145,13 +127,18 @@ class BacktestEngine:
         start_date = str(df["open_time"].iloc[MIN_CANDLES])
         end_date = str(df["open_time"].iloc[-1])
 
-        logger.info(f"[Backtest] Iniciando {self.symbol} {self.interval} | {len(df):,} candles | sentiment={self.sentiment_mode}")
+        logger.info(
+            f"[Backtest] Iniciando {self.symbol} {self.interval} "
+            f"| {len(df):,} candles | sentiment={self.sentiment_mode}"
+        )
 
         for i in range(MIN_CANDLES, len(df)):
             window = df.iloc[:i+1].copy()
             current_candle = df.iloc[i]
             current_price = float(current_candle["close"])
             ts = str(current_candle["open_time"])
+            # ⭐ data do candle simulado — corrige o bug #1
+            candle_date = pd.Timestamp(current_candle["open_time"]).date()
 
             # Verifica SL/TP do trade aberto
             if open_trade is not None:
@@ -179,7 +166,7 @@ class BacktestEngine:
                 logger.debug(f"[Backtest] Erro técnico no candle {i}: {e}")
                 continue
 
-            # Combina com sentiment simulado (SentimentResult real)
+            # Combina com sentiment simulado
             try:
                 decision = self.combiner.combine(tech, self._sentiment)
             except Exception as e:
@@ -188,18 +175,16 @@ class BacktestEngine:
 
             total_signals += 1
 
-            # Tenta abrir trade
+            # Tenta abrir trade passando candle_date para reset diário correto
             if open_trade is None:
-                ok, reason = rm.can_trade(decision)
+                ok, reason = rm.can_trade(decision, current_date=candle_date)
                 if ok:
-                    open_trade = rm.open_trade(decision)
-                    logger.debug(f"[Backtest] Trade aberto: {open_trade.direction} @ ${current_price:,.2f}")
+                    open_trade = rm.open_trade(decision, current_date=candle_date)
 
-        # Fecha trade ainda aberto ao final do backtest
+        # Fecha trade ainda aberto ao final
         if open_trade is not None:
             rm.close_trade(open_trade, float(df["close"].iloc[-1]))
 
-        # Calcula métricas
         metrics = PerformanceMetrics(rm.closed_trades).calculate()
 
         result = BacktestResult(
