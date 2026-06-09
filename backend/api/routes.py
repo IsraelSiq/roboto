@@ -15,7 +15,6 @@ Endpoints:
 
 import logging
 import threading
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -167,9 +166,29 @@ def get_candles(symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100)
     """Últimos candles do símbolo."""
     try:
         df = _client.get_candles(symbol=symbol, interval=interval, limit=limit)
-        records = df[["open", "high", "low", "close", "volume"]].tail(50).reset_index()
-        records["timestamp"] = records["timestamp"].astype(str)
-        return {"candles": records.to_dict(orient="records"), "symbol": symbol, "interval": interval}
+        if df.empty:
+            raise HTTPException(status_code=502, detail="Nenhum candle recebido da Binance")
+        # Coluna correta é open_time (não timestamp)
+        df_out = df[["open_time", "open", "high", "low", "close", "volume"]].tail(50).copy()
+        df_out["open_time"] = df_out["open_time"].astype(str)
+        return {
+            "candles": df_out.to_dict(orient="records"),
+            "symbol": symbol,
+            "interval": interval,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro em /candles: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/price", tags=["Market"])
+def get_price(symbol: str = "BTCUSDT"):
+    """Preço atual do símbolo."""
+    try:
+        price = _client.get_price(symbol=symbol)
+        return {"symbol": symbol, "price": price}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
