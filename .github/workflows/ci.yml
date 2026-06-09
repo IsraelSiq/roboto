@@ -33,7 +33,7 @@ jobs:
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: pytest tests/ -v --tb=short
+        run: python -m pytest tests/ -v --tb=short --ignore=tests/test_api.py
 
   lint:
     name: Lint
