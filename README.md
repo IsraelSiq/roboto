@@ -47,25 +47,31 @@ roboto/
 │       └── logging.py             # Log de sinais no Supabase
 ├── frontend/
 │   └── src/
-│       ├── components/
-│       │   ├── SignalCard.tsx      # Sinal atual (CALL/PUT/AGUARDAR + força)
-│       │   ├── SentimentPanel.tsx # Notícias + scores FinBERT
-│       │   ├── MetricsChart.tsx   # Win Rate, Profit Factor, Drawdown
-│       │   └── HistoryTable.tsx   # Histórico de sinais do Supabase
-│       └── services/
-│           └── api.ts             # Chamadas ao backend
+│       ├── lib/
+│       │   ├── supabase.ts        # Cliente Supabase + tipos TypeScript
+│       │   └── api.ts             # Chamadas ao backend
+│       └── components/
+│           ├── SignalCard.tsx      # Sinal atual (CALL/PUT/AGUARDAR + força)
+│           ├── SentimentPanel.tsx # Notícias + scores FinBERT
+│           ├── MetricsChart.tsx   # Win Rate, Profit Factor, Drawdown
+│           └── HistoryTable.tsx   # Histórico de sinais do Supabase
 ├── tests/
 │   └── backtest/
 │       └── run_backtest.py        # Backtest histórico de 3 meses
 ├── alpha_test.py                  # 🧪 Ponto de teste alpha (paper trading local)
 ├── docs/
-│   ├── supabase_schema.sql        # Schema das tabelas signals + trades
+│   ├── supabase_schema.sql        # Schema das tabelas (4 tabelas + RLS)
+│   ├── INFRA.md                   # Arquitetura GitHub + Vercel + Supabase
 │   ├── VALIDACAO.md               # Metodologia de validação por fase
 │   ├── METRICAS.md                # Definição das métricas usadas
 │   └── ESTRATEGIA.md              # Documentação da estratégia
+├── .github/
+│   └── workflows/
+│       └── ci.yml                 # GitHub Actions: testes automáticos em todo PR
 ├── .env.example
 ├── requirements.txt
 ├── .gitignore
+├── Dockerfile
 └── docker-compose.yml
 ```
 
@@ -79,11 +85,12 @@ roboto/
 | Análise técnica | pandas-ta (130+ indicadores) |
 | Sentiment | FinBERT (HuggingFace) + NewsAPI |
 | Conexão Binance | python-binance (API oficial) |
-| Banco de dados | Supabase (PostgreSQL) |
+| Banco de dados | Supabase (PostgreSQL + Realtime) |
 | Frontend | Next.js + TailwindCSS + Recharts |
+| Deploy frontend | Vercel (automático a cada push) |
 | Deploy backend | Railway |
-| Deploy frontend | Vercel |
 | Ambiente de testes | Binance Testnet |
+| CI/CD | GitHub Actions |
 
 ---
 
@@ -137,41 +144,37 @@ roboto/
 
 ## 🚦 Fases do Projeto
 
-| Fase | Objetivo | Tempo estimado |
-|---|---|---|
-| Fase 0 | Setup inicial + estrutura | 1 dia |
-| Fase 1 | Conexão Binance + coleta de dados | 2 dias |
-| Fase 2 | Análise técnica (pandas-ta) | 2 dias |
-| Fase 3 | Sentiment analysis (FinBERT + NewsAPI) | 3 dias |
-| Fase 4 | Combinação técnico + sentiment ⭐ | 2 dias |
-| Fase 5 | Risk management + métricas | 2 dias |
-| Fase 6 | Estratégia principal + ciclo automático | 2 dias |
-| Fase 7 | Backtest histórico (3 meses) | 3 dias |
-| Fase 8 | Alpha test local (paper trading) 🧪 | 3–5 dias |
-| Fase 9 | Testnet Binance (dinheiro virtual real) | 2 semanas |
-| Fase 10 | Dashboard frontend | 3 dias |
-| Fase 11 | Capital real pequeno ($10–$20) | Após Fase 9 aprovada |
+| Fase | Objetivo | Tempo estimado | Status |
+|---|---|---|---|
+| Fase 0 | Setup inicial + estrutura | 1 dia | ✅ Concluída |
+| Fase 1 | Conexão Binance + coleta de dados | 2 dias | 🔄 Em andamento |
+| Fase 2 | Análise técnica (pandas-ta) | 2 dias | ⏳ Pendente |
+| Fase 3 | Sentiment analysis (FinBERT + NewsAPI) | 3 dias | ⏳ Pendente |
+| Fase 4 | Combinação técnico + sentiment ⭐ | 2 dias | ⏳ Pendente |
+| Fase 5 | Risk management + métricas | 2 dias | ⏳ Pendente |
+| Fase 6 | Estratégia principal + ciclo automático | 2 dias | ⏳ Pendente |
+| Fase 7 | Backtest histórico (3 meses) | 3 dias | ⏳ Pendente |
+| Fase 8 | Alpha test local (paper trading) 🧪 | 3–5 dias | ⏳ Pendente |
+| Fase 9 | Testnet Binance (dinheiro virtual real) | 2 semanas | ⏳ Pendente |
+| Fase 10 | Dashboard frontend | 3 dias | ⏳ Pendente |
+| Fase 11 | Capital real pequeno ($10–$20) | Após Fase 9 aprovada | 🔒 Bloqueado |
 
 ---
 
 ## ✅ 47 Tasks — Checklist Completo
 
-### 🟦 Fase 0 — Setup do repositório (4 tasks)
+### ✅ ~~Fase 0 — Setup do repositório~~ (4/4 concluídas)
 
-- [ ] **0.1** — Criar repositório `roboto` no GitHub + estrutura de pastas  
-  `feat: setup inicial com estrutura de pastas`
-- [ ] **0.2** — Adicionar `requirements.txt` e `.gitignore`  
-  `feat: adicionar requirements.txt e .gitignore`
-- [ ] **0.3** — Criar `backend/config.py` com variáveis de ambiente (`.env`)  
-  `feat: adicionar config.py com variáveis de ambiente`
-- [ ] **0.4** — Criar `README.md` completo  
-  `docs: criar README.md completo`
+- [x] **0.1** — Criar repositório `roboto` no GitHub + estrutura de pastas
+- [x] **0.2** — Adicionar `requirements.txt` e `.gitignore`
+- [x] **0.3** — Criar `backend/config.py` com variáveis de ambiente (`.env`)
+- [x] **0.4** — Criar `README.md` completo + `docs/INFRA.md` com arquitetura GitHub + Vercel + Supabase
 
 ---
 
-### 🟦 Fase 1 — Conexão Binance + coleta de dados (5 tasks)
+### 🔄 Fase 1 — Conexão Binance + coleta de dados (0/5 concluídas)
 
-- [ ] **1.1** — Criar conta Binance Testnet em https://testnet.binance.vision + gerar API Key/Secret  
+- [x] **1.1** — Criar conta Binance Testnet em https://testnet.binance.vision + gerar API Key (Ed25519)  
   `feat: configurar credenciais Binance testnet`
 - [ ] **1.2** — Implementar `binance_client.py` com conexão testnet  
   `feat: implementar binance_client.py com conexão testnet`
@@ -184,7 +187,7 @@ roboto/
 
 ---
 
-### 🟦 Fase 2 — Análise técnica (4 tasks)
+### 🟦 Fase 2 — Análise técnica (0/4 concluídas)
 
 - [ ] **2.1** — Implementar `technical.py` com RSI + EMA50  
   `feat: implementar technical.py com RSI e EMA50`
@@ -197,7 +200,7 @@ roboto/
 
 ---
 
-### 🟦 Fase 3 — Sentiment Analysis ⭐ (5 tasks)
+### 🟦 Fase 3 — Sentiment Analysis ⭐ (0/5 concluídas)
 
 - [ ] **3.1** — Criar conta NewsAPI em https://newsapi.org + adicionar key no `.env`  
   `feat: configurar NewsAPI key`
@@ -212,7 +215,7 @@ roboto/
 
 ---
 
-### 🟦 Fase 4 — Combinação de sinais ⭐ NÚCLEO (5 tasks)
+### 🟦 Fase 4 — Combinação de sinais ⭐ NÚCLEO (0/5 concluídas)
 
 - [ ] **4.1** — Criar `signals.py` com função `combine(technical, sentiment)`  
   `feat: criar signals.py com função combine`
@@ -227,7 +230,7 @@ roboto/
 
 ---
 
-### 🟦 Fase 5 — Risk Management (4 tasks)
+### 🟦 Fase 5 — Risk Management (0/4 concluídas)
 
 - [ ] **5.1** — Implementar `risk/manager.py` com stop loss, take profit e max trades/dia  
   `feat: implementar risk manager com stop loss e take profit`
@@ -240,18 +243,18 @@ roboto/
 
 ---
 
-### 🟦 Fase 6 — Estratégia principal + ciclo automático (3 tasks)
+### 🟦 Fase 6 — Estratégia principal + ciclo automático (0/3 concluídas)
 
 - [ ] **6.1** — Implementar `strategies/simple_rsi_macd.py` orquestrando ciclo completo  
   `feat: estratégia principal RSI+MACD orquestrando ciclo completo`
-- [ ] **6.2** — Criar `backend/main.py` com FastAPI e 8 rotas (`/`, `/signal`, `/metrics`, `/risk`, `/data`, `/news`, `/candles`, `/risk/pause`)  
-  `feat: adicionar entry point FastAPI com 8 rotas`
-- [ ] **6.3** — Testar ciclo completo local: rodar API + confirmar `/signal` retornando sinal com técnico + sentiment  
+- [ ] **6.2** — Criar `backend/main.py` com FastAPI e 9 rotas  
+  `feat: adicionar entry point FastAPI com 9 rotas`
+- [ ] **6.3** — Testar ciclo completo local: rodar API + confirmar `/signal` retornando sinal completo  
   `test: validar ciclo completo via FastAPI`
 
 ---
 
-### 🟦 Fase 7 — Backtest histórico (4 tasks)
+### 🟦 Fase 7 — Backtest histórico (0/4 concluídas)
 
 - [ ] **7.1** — Implementar `tests/backtest/run_backtest.py` com 3 meses de candles históricos  
   `feat: backtest histórico com 3 meses de candles`
@@ -259,104 +262,39 @@ roboto/
   `docs: registrar resultado do backtest em VALIDACAO.md`
 - [ ] **7.3** — Meta: win rate ≥ 65%. Se não atingir → ajustar parâmetros RSI/MACD e repetir  
   `fix: ajustar parâmetros de estratégia conforme backtest`
-- [ ] **7.4** — Criar `docs/ESTRATEGIA.md` documentando indicadores e lógica final  
+- [ ] **7.4** — Documentar estratégia final em `docs/ESTRATEGIA.md`  
   `docs: documentar estratégia final em ESTRATEGIA.md`
 
 ---
 
-### 🟦 Fase 8 — Alpha Test local 🧪 (3 tasks) — PONTO DE VALIDAÇÃO
+### 🟦 Fase 8 — Alpha Test local 🧪 (0/3 concluídas) — PONTO DE VALIDAÇÃO
 
-- [ ] **8.1** — Rodar alpha test de 10 ciclos rápidos para verificar sem erros:  
-  `python alpha_test.py --cycles 10 --interval 30`  
-  `feat: script de alpha test local com paper trading`
-- [ ] **8.2** — Rodar alpha test completo: 50 ciclos, intervalo de 5min (real):  
-  `python alpha_test.py --cycles 50 --interval 300 --symbol BTCUSDT`  
-  `test: alpha test completo 50 ciclos BTCUSDT`
-- [ ] **8.3** — Meta: win rate ≥ 65% → ✅ avançar para Testnet. Se não → ajustar e repetir  
-  `docs: registrar resultado alpha test`
+- [ ] **8.1** — Rodar alpha test de 10 ciclos rápidos:  
+  `python alpha_test.py --cycles 10 --interval 30`
+- [ ] **8.2** — Rodar alpha test completo: 50 ciclos, intervalo 5min:  
+  `python alpha_test.py --cycles 50 --interval 300 --symbol BTCUSDT`
+- [ ] **8.3** — Meta: win rate ≥ 65% → ✅ avançar para Testnet. Abaixo → ajustar e repetir
 
 ---
 
-### 🟦 Fase 9 — Testnet Binance (3 tasks)
+### 🟦 Fase 9 — Testnet Binance (0/3 concluídas)
 
-- [ ] **9.1** — Confirmar `BINANCE_TESTNET=true` no `.env` e ativar execução real de ordens no `simple_rsi_macd.py`  
+- [ ] **9.1** — Confirmar `BINANCE_TESTNET=true` e ativar execução real de ordens  
   `feat: ativar execução de ordens no testnet`
-- [ ] **9.2** — Rodar robô por 1–2 semanas monitorando `GET /metrics` diariamente  
-  `test: monitoramento testnet por 2 semanas`
-- [ ] **9.3** — Meta: win rate ≥ 62% em ≥ 30 trades → registrar em `docs/VALIDACAO.md`  
-  `docs: registrar resultado testnet`
+- [ ] **9.2** — Rodar robô por 1–2 semanas monitorando `GET /metrics` diariamente
+- [ ] **9.3** — Meta: win rate ≥ 62% em ≥ 30 trades → registrar em `docs/VALIDACAO.md`
 
 ---
 
-### 🟦 Fase 10 — Dashboard Frontend (7 tasks)
+### 🟦 Fase 10 — Dashboard Frontend (0/7 concluídas)
 
-- [ ] **10.1** — Setup Next.js com Tailwind + Recharts:  
-  `cd frontend && npx create-next-app@latest . --typescript --tailwind --app && npm install recharts lucide-react`  
-  `feat: setup Next.js com Tailwind e Recharts`
-- [ ] **10.2** — Implementar `SignalCard` — sinal atual (CALL/PUT/AGUARDAR + força + reason)  
-  `feat: implementar SignalCard com sinal atual`
-- [ ] **10.3** — Implementar `SentimentPanel` — notícias com scores FinBERT  
-  `feat: implementar SentimentPanel com scores`
-- [ ] **10.4** — Implementar `MetricsChart` — Win Rate, Profit Factor, Drawdown em gráfico  
-  `feat: implementar MetricsChart com Recharts`
-- [ ] **10.5** — Implementar `HistoryTable` — histórico de sinais do Supabase  
-  `feat: implementar HistoryTable com dados Supabase`
-- [ ] **10.6** — Conectar frontend ao backend via `GET /signal`, `GET /metrics`, `GET /news`  
-  `feat: conectar frontend ao backend via API`
-- [ ] **10.7** — Deploy frontend no Vercel + backend no Railway  
-  `chore: deploy frontend Vercel + backend Railway`
-
----
-
-## 🗓️ Ordem de Execução Recomendada
-
-```
-HOJE
-├── Fase 0 → criar repo + subir arquivos no GitHub
-├── Fase 1 → criar contas Binance testnet + NewsAPI + Supabase
-└── Fase 2 → testar análise técnica isolada
-
-AMANHÃ
-├── Fase 3 → testar FinBERT + NewsAPI
-├── Fase 4 → testar combinação de sinais
-└── Fase 5 → testar risk manager + métricas
-
-ESSA SEMANA
-├── Fase 6 → rodar API completa local
-├── Fase 7 → rodar backtest 3 meses
-└── Fase 8 → 🧪 ALPHA TEST ← meta desta semana
-
-PRÓXIMAS 2 SEMANAS
-├── Fase 9 → testnet Binance
-└── Fase 10 → dashboard frontend
-
-SÓ APÓS FASE 9 APROVADA
-└── Capital real (mínimo $10–$20)
-```
-
----
-
-## 🚀 Como instalar e rodar
-
-```bash
-# 1. Clonar o repositório
-git clone https://github.com/IsraelSiq/roboto.git
-cd roboto
-
-# 2. Criar e preencher o .env
-cp .env.example .env
-# Editar .env com suas keys (Binance testnet, NewsAPI, Supabase)
-
-# 3. Instalar dependências
-pip install -r requirements.txt
-
-# 4. Criar tabelas no Supabase
-# Rodar docs/supabase_schema.sql no SQL Editor do Supabase
-
-# 5. Rodar a API
-uvicorn backend.main:app --reload --port 8000
-# Acesse http://localhost:8000/signal
-```
+- [ ] **10.1** — Setup Next.js + Tailwind + Recharts no diretório `frontend/`
+- [ ] **10.2** — Implementar `SignalCard` — sinal atual com força e reason
+- [ ] **10.3** — Implementar `SentimentPanel` — notícias com scores FinBERT
+- [ ] **10.4** — Implementar `MetricsChart` — gráficos de win rate, drawdown, profit factor
+- [ ] **10.5** — Implementar `HistoryTable` — histórico de sinais do Supabase
+- [ ] **10.6** — Conectar frontend ao backend e ao Supabase Realtime
+- [ ] **10.7** — Deploy: frontend no Vercel + backend no Railway
 
 ---
 
@@ -364,7 +302,7 @@ uvicorn backend.main:app --reload --port 8000
 
 | Rota | O que retorna |
 |---|---|
-| `GET /` | Status do bot (online/offline) |
+| `GET /` | Status do bot |
 | `GET /signal` | Sinal atual completo (técnico + sentiment + decisão) |
 | `GET /metrics` | Win rate, profit factor, drawdown, Sharpe |
 | `GET /risk` | Status do risk manager |
@@ -384,6 +322,20 @@ uvicorn backend.main:app --reload --port 8000
 | Backtest | `run_backtest.py` | Win rate ≥ 65% |
 | Testnet Binance | API real (testnet) | Win rate ≥ 62% |
 | Capital real | Binance real | Só após as 3 acima ✅ |
+
+---
+
+## 🚀 Como instalar e rodar
+
+```bash
+git clone https://github.com/IsraelSiq/roboto.git
+cd roboto
+cp .env.example .env
+# Preencher .env com as credenciais
+pip install -r requirements.txt
+# Rodar docs/supabase_schema.sql no SQL Editor do Supabase
+uvicorn backend.main:app --reload --port 8000
+```
 
 ---
 
