@@ -25,14 +25,14 @@ class MetricsResult:
     total_trades: int = 0
     wins: int = 0
     losses: int = 0
-    win_rate: float = 0.0          # % de trades vencedores
-    profit_factor: float = 0.0     # lucro total / perda total
-    max_drawdown: float = 0.0      # maior queda do pico (%) 
-    sharpe_ratio: float = 0.0      # retorno ajustado ao risco
-    avg_win_pct: float = 0.0       # PnL médio dos wins
-    avg_loss_pct: float = 0.0      # PnL médio dos losses
-    total_pnl_pct: float = 0.0     # PnL total acumulado
-    approved: bool = False         # True se win_rate >= 65%
+    win_rate: float = 0.0
+    profit_factor: float = 0.0
+    max_drawdown: float = 0.0
+    sharpe_ratio: float = 0.0
+    avg_win_pct: float = 0.0
+    avg_loss_pct: float = 0.0
+    total_pnl_pct: float = 0.0
+    approved: bool = False
 
     def summary(self) -> str:
         status = "✅ APROVADO" if self.approved else "❌ REPROVADO"
@@ -76,17 +76,17 @@ class PerformanceMetrics:
             return MetricsResult()
 
         pnls = [t.pnl_pct for t in self.trades if t.pnl_pct is not None]
-        wins  = [p for p in pnls if p > 0]
+        wins   = [p for p in pnls if p > 0]
         losses = [p for p in pnls if p <= 0]
 
-        total = len(pnls)
-        n_wins = len(wins)
+        total    = len(pnls)
+        n_wins   = len(wins)
         n_losses = len(losses)
 
         win_rate = (n_wins / total * 100) if total > 0 else 0.0
 
         gross_profit = sum(wins) if wins else 0.0
-        gross_loss = abs(sum(losses)) if losses else 0.0
+        gross_loss   = abs(sum(losses)) if losses else 0.0
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf")
 
         avg_win  = (sum(wins) / n_wins) if wins else 0.0
@@ -139,7 +139,7 @@ class PerformanceMetrics:
         return max_dd
 
     def _calc_sharpe(self, pnls: list[float]) -> float:
-        """Calcula Sharpe ratio (anualizado, base diária)."""
+        """Calcula Sharpe ratio (base por trade, sem anualizacao)."""
         if len(pnls) < 2:
             return 0.0
         n = len(pnls)
@@ -148,7 +148,6 @@ class PerformanceMetrics:
         std = math.sqrt(variance)
         if std == 0:
             return 0.0
-        # Ajuste: assume ~288 candles de 5min por dia
         rf_per_trade = self.risk_free_rate / 288
         return round((mean - rf_per_trade) / std * math.sqrt(n), 4)
 
@@ -158,61 +157,40 @@ class PerformanceMetrics:
 # ----------------------------------------------------------
 if __name__ == "__main__":
     import logging
+    import random
     logging.basicConfig(level=logging.INFO)
     from backend.risk.manager import RiskManager, Trade
     from backend.analysis.signals import SignalDecision
 
     print("\nRoboto — Métricas de Performance Test")
-    print("Simulando 20 trades...\n")
+    print("Simulando 20 trades com 70% win rate...\n")
 
-    rm = RiskManager(balance=10000.0, only_strong=False)
-
-    # Simula 20 trades com distribuição realista
-    import random
     random.seed(42)
-    results = []
+    rm = RiskManager(balance=10000.0, only_strong=False)
 
     for i in range(20):
         price = 60000.0 + random.uniform(-2000, 2000)
-        direction = random.choice(["CALL_FORTE", "PUT_FORTE"])
-        decision = SignalDecision(
-            final=direction,
-            technical_signal=direction.split("_")[0],
-            sentiment_signal="positive" if direction == "CALL_FORTE" else "negative",
-            reason="Simulação",
-            confidence=0.90,
-            symbol="BTCUSDT",
-            timeframe="5m",
-            current_price=price,
-            rsi=50.0,
-            sentiment_score=0.85,
-            news_count=5,
-        )
+        is_call = random.choice([True, False])
+        direction = "CALL" if is_call else "PUT"
 
-        ok, reason = rm.can_trade(decision)
-        if not ok:
-            # Fora da pausa, simula diretamente
-            pass
+        sl = round(price * (0.95 if is_call else 1.05), 2)
+        tp = round(price * (1.10 if is_call else 0.90), 2)
 
         trade = Trade(
             id=f"t{i:02d}",
             symbol="BTCUSDT",
-            direction=direction.split("_")[0],
+            direction=direction,
             strength="FORTE",
             entry_price=price,
-            stop_loss=price * 0.95,
-            take_profit=price * 1.10,
+            stop_loss=sl,
+            take_profit=tp,
             opened_at="2026-01-01T00:00:00Z",
         )
 
-        # 70% win rate simulado
-        if random.random() < 0.70:
-            exit_price = trade.take_profit
-        else:
-            exit_price = trade.stop_loss
-
+        exit_price = tp if random.random() < 0.70 else sl
         rm.close_trade(trade, exit_price)
 
+    print(f"\nTotal trades na lista: {len(rm.closed_trades)}")
     metrics = PerformanceMetrics(rm.closed_trades)
     result = metrics.calculate()
     print(result.summary())

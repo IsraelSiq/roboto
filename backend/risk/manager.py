@@ -79,6 +79,7 @@ class RiskManager:
     ):
         self.initial_balance = balance
         self.balance = balance
+        self.peak_balance = balance          # rastreia o pico para drawdown correto
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
         self.max_trades_day = max_trades_day
@@ -177,6 +178,7 @@ class RiskManager:
     def close_trade(self, trade: Trade, exit_price: float) -> Trade:
         """
         Fecha um trade e calcula PnL.
+        Registra o trade na lista interna se ainda não estiver.
 
         Args:
             trade:       Trade a fechar
@@ -195,8 +197,17 @@ class RiskManager:
         trade.pnl_pct = round(pnl_pct, 4)
         trade.result = "WIN" if pnl_pct > 0 else "LOSS"
 
+        # Garante que o trade está na lista (suporte a trades externos / simulação)
+        if trade not in self._trades:
+            self._trades.append(trade)
+
         # Atualiza saldo
         self.balance = round(self.balance * (1 + pnl_pct / 100), 2)
+
+        # Atualiza pico (drawdown baseado no pico de saldo, não no inicial)
+        if self.balance > self.peak_balance:
+            self.peak_balance = self.balance
+
         self._open_trade = None
 
         logger.info(f"[Trade FECHADO] ID={trade.id} | {trade.pnl_summary()} | Saldo: ${self.balance:,.2f}")
@@ -277,9 +288,11 @@ class RiskManager:
         logger.warning(f"[RiskManager] BOT PAUSADO: {reason}")
 
     def _calc_drawdown(self) -> float:
-        if self.initial_balance == 0:
+        """Drawdown calculado a partir do pico de saldo (não do inicial)."""
+        if self.peak_balance == 0:
             return 0.0
-        return (self.initial_balance - self.balance) / self.initial_balance * 100
+        dd = (self.peak_balance - self.balance) / self.peak_balance * 100
+        return max(dd, 0.0)  # nunca negativo
 
     def _reset_daily_count_if_needed(self):
         today = date.today()
@@ -306,7 +319,6 @@ if __name__ == "__main__":
 
     rm = RiskManager(balance=10000.0, only_strong=True)
 
-    # Simula um sinal CALL FORTE
     decision = SignalDecision(
         final="CALL_FORTE",
         technical_signal="CALL",
@@ -333,8 +345,11 @@ if __name__ == "__main__":
         print(f"Trade aberto: {trade.id} | SL=${trade.stop_loss:,.2f} | TP=${trade.take_profit:,.2f}")
 
         # Simula WIN
-        exit_price = trade.take_profit
-        rm.close_trade(trade, exit_price)
+        rm.close_trade(trade, trade.take_profit)
         print(f"Resultado: {trade.pnl_summary()}")
 
-    print(f"\nStatus: {rm.status()}")
+    status = rm.status()
+    print(f"\nSaldo   : ${status['balance']:,.2f}")
+    print(f"Drawdown: {status['drawdown_pct']:.1f}% (esperado: 0.0% pois está no pico)")
+    print(f"Trades  : {status['total_trades']}")
+    print(f"Pausado : {status['paused']}")
