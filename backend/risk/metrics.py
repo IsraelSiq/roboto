@@ -96,11 +96,12 @@ class PerformanceMetrics:
         max_dd = self._calc_max_drawdown(pnls)
         sharpe = self._calc_sharpe(pnls)
 
+        # Fix W504: operador no início da linha (PEP8)
         approved = (
-            win_rate >= self.META_WIN_RATE and
-            profit_factor >= self.META_PROFIT_FACTOR and
-            max_dd < self.META_MAX_DRAWDOWN and
-            sharpe >= self.META_SHARPE
+            win_rate >= self.META_WIN_RATE
+            and profit_factor >= self.META_PROFIT_FACTOR
+            and max_dd < self.META_MAX_DRAWDOWN
+            and sharpe >= self.META_SHARPE
         )
 
         return MetricsResult(
@@ -159,8 +160,7 @@ if __name__ == "__main__":
     import logging
     import random
     logging.basicConfig(level=logging.INFO)
-    from backend.risk.manager import RiskManager, Trade
-    from backend.analysis.signals import SignalDecision
+    from backend.risk.manager import RiskManager, Trade  # noqa: F811
 
     print("\nRoboto — Métricas de Performance Test")
     print("Simulando 20 trades com 70% win rate...\n")
