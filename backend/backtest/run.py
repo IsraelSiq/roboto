@@ -5,7 +5,14 @@ Script de entrada para rodar um backtest completo.
 Uso:
     python -m backend.backtest.run
     python -m backend.backtest.run --symbol ETHUSDT --interval 1h --start 2026-01-01 --balance 5000
-    python -m backend.backtest.run --sentiment positive --weak
+    python -m backend.backtest.run --sentiment neutral --weak   # aceita sinais fracos
+    python -m backend.backtest.run --sentiment negative         # testa mercado de baixa
+
+Nota sobre sentiment:
+    O backtest simula o sentiment (sem chamar a API de notícias).
+    - positive: CALL → CALL_FORTE | PUT → AGUARDAR   (testa bias de alta)
+    - negative: PUT  → PUT_FORTE  | CALL → AGUARDAR  (testa bias de baixa)
+    - neutral:  CALL → CALL_FRACO | PUT  → PUT_FRACO  (precisa de --weak)
 """
 
 import argparse
@@ -31,8 +38,10 @@ def main():
     parser.add_argument("--balance",   type=float, default=10000.0)
     parser.add_argument("--sl",        type=float, default=5.0,  help="Stop loss %")
     parser.add_argument("--tp",        type=float, default=10.0, help="Take profit %")
-    parser.add_argument("--sentiment", default="neutral", choices=["neutral", "positive", "negative"])
-    parser.add_argument("--weak",      action="store_true", help="Aceitar sinais fracos")
+    parser.add_argument("--sentiment", default="positive",
+                        choices=["neutral", "positive", "negative"],
+                        help="Simula bias de sentiment (padrão: positive)")
+    parser.add_argument("--weak",      action="store_true", help="Aceitar sinais fracos (only_strong=False)")
     parser.add_argument("--no-save",   action="store_true", help="Não salvar no Supabase")
     args = parser.parse_args()
 
