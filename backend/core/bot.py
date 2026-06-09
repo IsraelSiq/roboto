@@ -168,13 +168,13 @@ class RobotoBot:
         decision = self.combiner.combine(tech, sent)
         logger.info(f"[Ciclo {self._cycle}] {decision.summary()}")
 
-        # 6. Persiste sinal no Supabase
+        # 6. Persiste sinal no Supabase (usa decision.final — atributo correto)
         signal_id = None
         if self.db:
             signal_id = self.db.save_signal({
                 "symbol":           self.symbol,
                 "interval":         self.interval,
-                "final":            decision.signal,
+                "final":            decision.final,
                 "technical_signal": tech.signal,
                 "sentiment_signal": sent.signal,
                 "sentiment_score":  sent.score,
