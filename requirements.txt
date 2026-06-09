@@ -9,9 +9,8 @@ pandas-ta==0.3.14b0
 
 # === Sentiment analysis ===
 transformers==4.44.2
-# torch: instale manualmente conforme seu sistema em https://pytorch.org/get-started/locally/
-# CPU only (mais leve, recomendado para inicio):
-# pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+# torch: instale separadamente antes do requirements.txt
+# pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 newsapi-python==0.2.7
 
 # === Backend ===
