@@ -4,11 +4,11 @@ python-binance==1.0.19
 # === Análise técnica ===
 pandas==2.2.3
 numpy
-pandas-ta==0.4.67b0
+pandas-ta-openbb
 
 # === Sentiment analysis ===
 transformers==4.44.2
-# torch: instale separadamente antes do requirements.txt
+# torch: instale separadamente antes do requirements.txt:
 # pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 newsapi-python==0.2.7
 
