@@ -1,0 +1,50 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+
+# === Ambiente virtual ===
+venv/
+.venv/
+env/
+.env
+!.env.example
+
+# === IDEs ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === Node / Frontend ===
+node_modules/
+.next/
+out/
+.vercel/
+
+# === Modelos FinBERT (grandes demais para o repo) ===
+models/
+*.bin
+*.safetensors
+*.pt
+*.ckpt
+
+# === Logs e dados gerados ===
+logs/
+*.log
+*.csv
+backtest_result*.csv
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Docker ===
+docker-compose.override.yml
