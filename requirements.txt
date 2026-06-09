@@ -4,7 +4,8 @@ python-binance==1.0.19
 # === Análise técnica ===
 pandas==2.2.3
 numpy
-pandas-ta-openbb
+# pandas-ta-classic: fork estável do pandas-ta para Python 3.13
+pandas-ta-classic
 
 # === Sentiment analysis ===
 transformers==4.44.2
@@ -26,6 +27,7 @@ requests==2.32.3
 httpx==0.27.2
 schedule==1.2.2
 cryptography==43.0.1
+importlib_metadata
 
 # === Testes ===
 pytest==8.3.3
