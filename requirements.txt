@@ -1,35 +1,15 @@
-# === Binance ===
+# Roboto — dependências
 python-binance==1.0.19
-
-# === Análise técnica ===
-pandas==2.2.3
-numpy
-# pandas-ta-classic: fork estável do pandas-ta para Python 3.13
-pandas-ta-classic
-
-# === Sentiment analysis ===
-# torch: instale separadamente ANTES do requirements.txt:
-# pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
-transformers==4.46.3
-tokenizers==0.20.3
+pandas==2.2.2
+pandas-ta-classic==0.3.14b
 newsapi-python==0.2.7
-
-# === Backend ===
-fastapi==0.115.0
-uvicorn==0.30.6
+transformers==4.40.2
+torch==2.3.0
 python-dotenv==1.0.1
-pydantic==2.9.2
-
-# === Supabase ===
-supabase==2.7.4
-
-# === Utilitários ===
-requests==2.32.3
-httpx==0.27.2
-schedule==1.2.2
-cryptography==43.0.1
-importlib_metadata
-
-# === Testes ===
-pytest==8.3.3
-pytest-asyncio==0.24.0
+fastapi==0.111.0
+uvicorn==0.29.0
+streamlit==1.35.0
+plotly==5.22.0
+requests==2.32.2
+httpx==0.27.0
+pydantic==2.7.1
