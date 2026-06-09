@@ -46,9 +46,9 @@ except ImportError:
 
 try:
     import pandas_ta as ta
-    check("  pandas-ta-openbb", True, getattr(ta, "__version__", "ok"))
+    check("  pandas-ta", True, getattr(ta, "__version__", "ok"))
 except ImportError:
-    check("  pandas-ta-openbb", False, "nao instalado — rode: pip install pandas-ta-openbb")
+    check("  pandas-ta", False, "nao instalado — rode: pip install pandas-ta-classic")
 
 try:
     from binance.client import Client
