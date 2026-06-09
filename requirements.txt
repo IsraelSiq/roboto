@@ -3,7 +3,7 @@ python-binance==1.0.19
 
 # === Análise técnica ===
 pandas==2.2.3
-numpy==1.26.4
+numpy
 pandas-ta==0.4.67b0
 
 # === Sentiment analysis ===
