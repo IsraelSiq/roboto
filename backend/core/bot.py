@@ -1,7 +1,8 @@
 """
-Roboto — Bot Principal (Fase 6)
+Roboto — Bot Principal
 Loop automático que une todos os módulos:
     Binance → Técnico → Sentiment → Sinal → RiskManager → Trade → Métricas
+    + Supabase para persistência de sinais, trades e sessões
 
 Uso:
     python -m backend.core.bot
@@ -38,13 +39,14 @@ class RobotoBot:
     Orquestra o ciclo completo de operação do robô.
 
     Args:
-        symbol:          Par de moedas (padrão: BTCUSDT)
-        interval:        Timeframe dos candles (padrão: 5m)
-        candle_limit:    Qtd de candles para análise técnica (padrão: 100)
-        balance:         Saldo inicial simulado em USDT (padrão: 10000.0)
-        sleep_seconds:   Intervalo entre ciclos em segundos (None = usa o do timeframe)
-        only_strong:     Só opera sinais FORTES (padrão: True)
-        max_cycles:      Limite de ciclos (None = infinito)
+        symbol:        Par de moedas (padrão: BTCUSDT)
+        interval:      Timeframe dos candles (padrão: 5m)
+        candle_limit:  Qtd de candles para análise técnica (padrão: 100)
+        balance:       Saldo inicial simulado em USDT (padrão: 10000.0)
+        sleep_seconds: Intervalo entre ciclos em segundos (None = usa o do timeframe)
+        only_strong:   Só opera sinais FORTES (padrão: True)
+        max_cycles:    Limite de ciclos (None = infinito)
+        use_db:        Persiste dados no Supabase (padrão: True)
     """
 
     def __init__(
@@ -56,6 +58,7 @@ class RobotoBot:
         sleep_seconds: int = None,
         only_strong: bool = True,
         max_cycles: int = None,
+        use_db: bool = True,
     ):
         self.symbol = symbol
         self.interval = interval
@@ -64,12 +67,22 @@ class RobotoBot:
         self.sleep_seconds = sleep_seconds or INTERVAL_SECONDS.get(interval, 300)
         self.keyword = SYMBOL_KEYWORDS.get(symbol, "bitcoin")
 
-        # Componentes
+        # Componentes de trading
         self.client    = BinanceClient()
         self.technical = TechnicalAnalyzer()
         self.sentiment = SentimentAnalyzer(min_confidence=0.6)
         self.combiner  = SignalCombiner(symbol=symbol, timeframe=interval)
         self.risk      = RiskManager(balance=balance, only_strong=only_strong)
+
+        # Supabase (opcional — não quebra o bot se estiver offline)
+        self.db = None
+        self._session_id = None
+        if use_db:
+            try:
+                from backend.db.supabase_client import SupabaseClient
+                self.db = SupabaseClient()
+            except Exception as e:
+                logger.warning(f"[Bot] Supabase indisponível (modo offline): {e}")
 
         self._cycle = 0
         self._running = False
@@ -83,6 +96,14 @@ class RobotoBot:
         self._running = True
         logger.info(f"[Bot] Iniciando Roboto | {self.symbol} {self.interval} | saldo=${self.risk.balance:,.2f}")
         self._print_header()
+
+        # Cria sessão no Supabase
+        if self.db:
+            self._session_id = self.db.create_session(
+                symbol=self.symbol,
+                interval=self.interval,
+                balance=self.risk.initial_balance,
+            )
 
         try:
             while self._running:
@@ -105,6 +126,13 @@ class RobotoBot:
             logger.info("[Bot] Interrompido pelo usuário (Ctrl+C).")
         finally:
             self._running = False
+            # Fecha sessão no Supabase
+            if self.db and self._session_id:
+                self.db.close_session(
+                    session_id=self._session_id,
+                    balance_end=self.risk.balance,
+                    cycles=self._cycle,
+                )
             self._print_metrics()
 
     def stop(self):
@@ -123,7 +151,7 @@ class RobotoBot:
             self._monitor_open_trade()
             return
 
-        # 2. Coleta candles como DataFrame
+        # 2. Coleta candles
         df = self._fetch_candles()
         if df is None or df.empty:
             return
@@ -140,18 +168,40 @@ class RobotoBot:
         decision = self.combiner.combine(tech, sent)
         logger.info(f"[Ciclo {self._cycle}] {decision.summary()}")
 
-        # 6. Verifica risk
+        # 6. Persiste sinal no Supabase
+        signal_id = None
+        if self.db:
+            signal_id = self.db.save_signal({
+                "symbol":           self.symbol,
+                "interval":         self.interval,
+                "final":            decision.signal,
+                "technical_signal": tech.signal,
+                "sentiment_signal": sent.signal,
+                "sentiment_score":  sent.score,
+                "confidence":       decision.confidence,
+                "rsi":              tech.rsi,
+                "current_price":    tech.current_price,
+                "reason":           decision.reason,
+                "cycle":            self._cycle,
+                "mode":             "paper",
+            })
+
+        # 7. Verifica risk
         ok, reason = self.risk.can_trade(decision)
         if not ok:
             logger.info(f"[Ciclo {self._cycle}] Trade bloqueado: {reason}")
             return
 
-        # 7. Abre trade
+        # 8. Abre trade
         trade = self.risk.open_trade(decision)
         logger.info(
             f"[Ciclo {self._cycle}] 🟢 Trade aberto | {trade.direction} @ ${trade.entry_price:,.2f} "
             f"| SL=${trade.stop_loss:,.2f} | TP=${trade.take_profit:,.2f}"
         )
+
+        # 9. Persiste trade aberto no Supabase
+        if self.db:
+            self.db.save_trade(trade, signal_id=signal_id)
 
     # ----------------------------------------------------------
     # MONITORAMENTO DE TRADE ABERTO
@@ -160,8 +210,7 @@ class RobotoBot:
     def _monitor_open_trade(self):
         trade = self.risk._open_trade
         try:
-            ticker = self.client.get_ticker(self.symbol)
-            current_price = float(ticker["price"])
+            current_price = self.client.get_price(self.symbol)
         except Exception as e:
             logger.error(f"[Monitor] Erro ao obter preço: {e}")
             return
@@ -174,6 +223,9 @@ class RobotoBot:
                 f"[Monitor] {emoji} Trade fechado por {exit_reason} | "
                 f"{trade.pnl_summary()} | Saldo: ${self.risk.balance:,.2f}"
             )
+            # Atualiza trade fechado no Supabase
+            if self.db:
+                self.db.save_trade(trade)
         else:
             logger.info(
                 f"[Monitor] Trade em aberto | {trade.direction} @ ${trade.entry_price:,.2f} "
@@ -235,6 +287,7 @@ class RobotoBot:
         print(f"  Max drawdown  : {self.risk.max_drawdown_pct}%")
         print(f"  Only strong   : {self.risk.only_strong}")
         print(f"  Ciclos        : {self.max_cycles or 'infinito'}")
+        print(f"  Supabase      : {'✅ conectado' if self.db else '⚠️  offline'}")
         print("="*58 + "\n")
 
     def _print_metrics(self):
@@ -273,6 +326,7 @@ if __name__ == "__main__":
     parser.add_argument("--cycles",   default=3,         type=int,   help="Nº de ciclos (0=infinito)")
     parser.add_argument("--sleep",    default=0,         type=int,   help="Seg entre ciclos (0=usa timeframe)")
     parser.add_argument("--weak",     action="store_true",           help="Aceita sinais FRACOS também")
+    parser.add_argument("--no-db",    action="store_true",           help="Desativa persistência no Supabase")
     args = parser.parse_args()
 
     bot = RobotoBot(
@@ -282,5 +336,6 @@ if __name__ == "__main__":
         sleep_seconds=args.sleep if args.sleep > 0 else None,
         only_strong=not args.weak,
         max_cycles=args.cycles if args.cycles > 0 else None,
+        use_db=not args.no_db,
     )
     bot.run()
