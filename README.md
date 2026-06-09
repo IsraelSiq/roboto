@@ -163,6 +163,11 @@ roboto/
 
 ## ✅ 47 Tasks — Checklist Completo
 
+> 💡 **Subtarefas opcionais** marcadas com `🔍` são de **referência** em projetos similares.  
+> Não são obrigatórias, mas valem consulta antes de implementar a task principal.
+
+---
+
 ### ✅ ~~Fase 0 — Setup do repositório~~ (4/4 concluídas)
 
 - [x] **0.1** — Criar repositório `roboto` no GitHub + estrutura de pastas
@@ -172,14 +177,15 @@ roboto/
 
 ---
 
-### 🔄 Fase 1 — Conexão Binance + coleta de dados (0/5 concluídas)
+### 🔄 Fase 1 — Conexão Binance + coleta de dados (1/5 concluídas)
 
-- [x] **1.1** — Criar conta Binance Testnet em https://testnet.binance.vision + gerar API Key (Ed25519)  
-  `feat: configurar credenciais Binance testnet`
+- [x] **1.1** — Criar conta Binance Testnet + gerar API Key (Ed25519)
 - [ ] **1.2** — Implementar `binance_client.py` com conexão testnet  
   `feat: implementar binance_client.py com conexão testnet`
+  - [ ] 🔍 *Opcional: estudar como o [Fully-Automated-Stock-Trading-Bot](https://github.com/SentientFusion/Fully-Automated-Stock-Trading-Bot) estrutura a conexão com a Binance API antes de implementar*
 - [ ] **1.3** — Implementar `get_candles()` e `get_historical_candles()` para backtest  
   `feat: implementar get_candles para obter candles BTCUSDT`
+  - [ ] 🔍 *Opcional: estudar como o [Fully-Automated-Stock-Trading-Bot](https://github.com/SentientFusion/Fully-Automated-Stock-Trading-Bot) faz o fetch de candles históricos em volume para backtest*
 - [ ] **1.4** — Implementar `data_collector.py` com 2 threads paralelas (candles + notícias)  
   `feat: implementar data_collector.py com threads paralelas`
 - [ ] **1.5** — Criar `symbols.py` com lista de ativos recomendados  
@@ -202,14 +208,16 @@ roboto/
 
 ### 🟦 Fase 3 — Sentiment Analysis ⭐ (0/5 concluídas)
 
-- [ ] **3.1** — Criar conta NewsAPI em https://newsapi.org + adicionar key no `.env`  
+- [ ] **3.1** — Criar conta NewsAPI + adicionar key no `.env`  
   `feat: configurar NewsAPI key`
-- [ ] **3.2** — Implementar `sentiment.py` com pipeline FinBERT (download ~440MB)  
+- [ ] **3.2** — Implementar `sentiment.py` com pipeline FinBERT (~440MB)  
   `feat: implementar sentiment.py com FinBERT`
+  - [ ] 🔍 *Opcional: estudar o pipeline FinBERT completo do [Fully-Automated-Stock-Trading-Bot](https://github.com/SentientFusion/Fully-Automated-Stock-Trading-Bot) — como faz download do modelo, pré-processamento e threshold de confiança*
 - [ ] **3.3** — Integrar NewsAPI para buscar notícias do ativo automaticamente  
   `feat: integrar NewsAPI em data_collector.py`
 - [ ] **3.4** — Implementar classificação positive/negative/neutral com score de confiança  
   `feat: classificação sentiment com score de confiança`
+  - [ ] 🔍 *Opcional: comparar abordagem de threshold do [Fully-Automated-Stock-Trading-Bot](https://github.com/SentientFusion/Fully-Automated-Stock-Trading-Bot) com a nossa antes de definir o valor mínimo de confiança*
 - [ ] **3.5** — Adicionar cache de notícias para evitar chamadas duplicadas  
   `feat: adicionar cache de notícias no data_collector`
 
@@ -249,6 +257,7 @@ roboto/
   `feat: estratégia principal RSI+MACD orquestrando ciclo completo`
 - [ ] **6.2** — Criar `backend/main.py` com FastAPI e 9 rotas  
   `feat: adicionar entry point FastAPI com 9 rotas`
+  - [ ] 🔍 *Opcional: estudar como o [crypto-compass](https://github.com/sahilmhatre4796/crypto-compass) organiza as rotas FastAPI e o ciclo automático*
 - [ ] **6.3** — Testar ciclo completo local: rodar API + confirmar `/signal` retornando sinal completo  
   `test: validar ciclo completo via FastAPI`
 
@@ -294,6 +303,7 @@ roboto/
 - [ ] **10.4** — Implementar `MetricsChart` — gráficos de win rate, drawdown, profit factor
 - [ ] **10.5** — Implementar `HistoryTable` — histórico de sinais do Supabase
 - [ ] **10.6** — Conectar frontend ao backend e ao Supabase Realtime
+  - [ ] 🔍 *Opcional: estudar como o [crypto-compass](https://github.com/sahilmhatre4796/crypto-compass) conecta o dashboard ao bot em tempo real*
 - [ ] **10.7** — Deploy: frontend no Vercel + backend no Railway
 
 ---
