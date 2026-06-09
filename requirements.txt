@@ -8,9 +8,10 @@ numpy
 pandas-ta-classic
 
 # === Sentiment analysis ===
-transformers==4.44.2
-# torch: instale separadamente antes do requirements.txt:
+# torch: instale separadamente ANTES do requirements.txt:
 # pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+transformers==4.46.3
+tokenizers==0.20.3
 newsapi-python==0.2.7
 
 # === Backend ===
