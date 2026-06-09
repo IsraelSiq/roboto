@@ -14,22 +14,22 @@ import time
 from datetime import datetime, timezone
 
 from backend.market.binance_client import BinanceClient
-from backend.analysis.technical import TechnicalAnalysis
-from backend.analysis.sentiment import SentimentAnalysis
-from backend.analysis.signals import SignalEngine
+from backend.analysis.technical import TechnicalAnalyzer
+from backend.analysis.sentiment import SentimentAnalyzer
+from backend.analysis.signals import SignalCombiner
 from backend.risk.manager import RiskManager
 from backend.risk.metrics import PerformanceMetrics
+from backend.market.symbols import SYMBOL_KEYWORDS
 
 logger = logging.getLogger(__name__)
 
-
 INTERVAL_SECONDS = {
-    "1m": 60,
-    "3m": 180,
-    "5m": 300,
+    "1m":  60,
+    "3m":  180,
+    "5m":  300,
     "15m": 900,
     "30m": 1800,
-    "1h": 3600,
+    "1h":  3600,
 }
 
 
@@ -62,16 +62,14 @@ class RobotoBot:
         self.candle_limit = candle_limit
         self.max_cycles = max_cycles
         self.sleep_seconds = sleep_seconds or INTERVAL_SECONDS.get(interval, 300)
+        self.keyword = SYMBOL_KEYWORDS.get(symbol, "bitcoin")
 
         # Componentes
-        self.client = BinanceClient()
-        self.technical = TechnicalAnalysis()
-        self.sentiment = SentimentAnalysis()
-        self.signal_engine = SignalEngine()
-        self.risk = RiskManager(
-            balance=balance,
-            only_strong=only_strong,
-        )
+        self.client    = BinanceClient()
+        self.technical = TechnicalAnalyzer()
+        self.sentiment = SentimentAnalyzer(min_confidence=0.6)
+        self.combiner  = SignalCombiner(symbol=symbol, timeframe=interval)
+        self.risk      = RiskManager(balance=balance, only_strong=only_strong)
 
         self._cycle = 0
         self._running = False
@@ -96,11 +94,10 @@ class RobotoBot:
                 self._run_cycle()
 
                 if self.risk.is_paused():
-                    logger.warning(f"[Bot] Bot pausado pelo RiskManager. Aguardando intervenção manual.")
-                    self._print_metrics()
+                    logger.warning("[Bot] Bot pausado pelo RiskManager. Aguardando intervenção manual.")
                     break
 
-                if self.max_cycles and self._cycle < self.max_cycles:
+                if self._running and (self.max_cycles is None or self._cycle < self.max_cycles):
                     logger.info(f"[Bot] Aguardando {self.sleep_seconds}s até próximo ciclo...")
                     time.sleep(self.sleep_seconds)
 
@@ -119,41 +116,29 @@ class RobotoBot:
 
     def _run_cycle(self):
         now = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        logger.info(f"[Ciclo {self._cycle}] ─── {now} UTC ──────────────────────")
+        logger.info(f"[Ciclo {self._cycle}] ─── {now} UTC " + "─" * 22)
 
-        # 1. Monitorar trade aberto (SL/TP)
+        # 1. Monitorar trade aberto (SL/TP primeiro)
         if self.risk._open_trade:
             self._monitor_open_trade()
-            return  # aguarda fechar antes de novo sinal
-
-        # 2. Coleta candles
-        candles = self._fetch_candles()
-        if candles is None:
             return
 
-        current_price = float(candles[-1][4])  # close do último candle
+        # 2. Coleta candles como DataFrame
+        df = self._fetch_candles()
+        if df is None or df.empty:
+            return
 
         # 3. Análise técnica
-        tech_signal = self._run_technical(candles)
-        if tech_signal is None:
+        tech = self._run_technical(df)
+        if tech is None:
             return
 
         # 4. Sentiment
-        sent_signal, sent_score, news_count = self._run_sentiment()
+        sent = self._run_sentiment()
 
-        # 5. Gera sinal combinado
-        decision = self.signal_engine.decide(
-            technical_signal=tech_signal["signal"],
-            sentiment_signal=sent_signal,
-            sentiment_score=sent_score,
-            current_price=current_price,
-            rsi=tech_signal["rsi"],
-            symbol=self.symbol,
-            timeframe=self.interval,
-            news_count=news_count,
-        )
-
-        logger.info(f"[Ciclo {self._cycle}] {decision}")
+        # 5. Combina sinal
+        decision = self.combiner.combine(tech, sent)
+        logger.info(f"[Ciclo {self._cycle}] {decision.summary()}")
 
         # 6. Verifica risk
         ok, reason = self.risk.can_trade(decision)
@@ -201,23 +186,23 @@ class RobotoBot:
 
     def _fetch_candles(self):
         try:
-            candles = self.client.get_klines(
+            df = self.client.get_candles(
                 symbol=self.symbol,
                 interval=self.interval,
                 limit=self.candle_limit,
             )
-            logger.info(f"[Ciclo {self._cycle}] {len(candles)} candles recebidos")
-            return candles
+            logger.info(f"[Ciclo {self._cycle}] {len(df)} candles recebidos")
+            return df
         except Exception as e:
             logger.error(f"[Ciclo {self._cycle}] Erro ao coletar candles: {e}")
             return None
 
-    def _run_technical(self, candles):
+    def _run_technical(self, df):
         try:
-            result = self.technical.analyze(candles)
+            result = self.technical.analyze(df)
             logger.info(
-                f"[Ciclo {self._cycle}] Técnico: {result['signal']} "
-                f"| RSI={result['rsi']:.2f} | MACD={result['macd_cross']} | EMA={result['ema_position']}"
+                f"[Ciclo {self._cycle}] Técnico: {result.signal} "
+                f"| RSI={result.rsi} | MACD={result.macd_cross} | EMA={result.price_vs_ema}"
             )
             return result
         except Exception as e:
@@ -226,15 +211,19 @@ class RobotoBot:
 
     def _run_sentiment(self):
         try:
-            result = self.sentiment.analyze(self.symbol)
-            signal = result.get("signal", "neutral")
-            score = result.get("score", 0.5)
-            count = result.get("count", 0)
-            logger.info(f"[Ciclo {self._cycle}] Sentiment: {signal} (score={score:.2f}, {count} notícias)")
-            return signal, score, count
+            result = self.sentiment.get_news_sentiment(
+                keyword=self.keyword,
+                page_size=5,
+            )
+            logger.info(
+                f"[Ciclo {self._cycle}] Sentiment: {result.signal} "
+                f"(score={result.score:.2f}, {result.news_count} notícias)"
+            )
+            return result
         except Exception as e:
+            from backend.analysis.sentiment import SentimentResult
             logger.warning(f"[Ciclo {self._cycle}] Erro no sentiment (usando neutral): {e}")
-            return "neutral", 0.5, 0
+            return SentimentResult(signal="neutral", score=0.5, reason=f"Erro: {e}")
 
     def _print_header(self):
         print("\n" + "="*58)
@@ -245,7 +234,7 @@ class RobotoBot:
         print(f"  Max trades/dia: {self.risk.max_trades_day}")
         print(f"  Max drawdown  : {self.risk.max_drawdown_pct}%")
         print(f"  Only strong   : {self.risk.only_strong}")
-        print(f"  Ciclos        : {self.max_cycles or '∞'}")
+        print(f"  Ciclos        : {self.max_cycles or 'infinito'}")
         print("="*58 + "\n")
 
     def _print_metrics(self):
@@ -281,7 +270,7 @@ if __name__ == "__main__":
     parser.add_argument("--symbol",   default="BTCUSDT", help="Par de moedas (padrão: BTCUSDT)")
     parser.add_argument("--interval", default="5m",      help="Timeframe (padrão: 5m)")
     parser.add_argument("--balance",  default=10000.0,   type=float, help="Saldo inicial USDT")
-    parser.add_argument("--cycles",   default=3,         type=int,   help="Nº de ciclos (padrão: 3, 0=infinito)")
+    parser.add_argument("--cycles",   default=3,         type=int,   help="Nº de ciclos (0=infinito)")
     parser.add_argument("--sleep",    default=0,         type=int,   help="Seg entre ciclos (0=usa timeframe)")
     parser.add_argument("--weak",     action="store_true",           help="Aceita sinais FRACOS também")
     args = parser.parse_args()
