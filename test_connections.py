@@ -45,10 +45,10 @@ except ImportError:
     check("  numpy", False, "nao instalado")
 
 try:
-    import pandas_ta as ta
-    check("  pandas-ta", True, getattr(ta, "__version__", "ok"))
+    import pandas_ta_classic as ta
+    check("  pandas-ta-classic", True, getattr(ta, "__version__", "ok"))
 except ImportError:
-    check("  pandas-ta", False, "nao instalado — rode: pip install pandas-ta-classic")
+    check("  pandas-ta-classic", False, "nao instalado — rode: pip install pandas-ta-classic")
 
 try:
     from binance.client import Client
