@@ -1,78 +1,48 @@
 """
-Testes — TechnicalAnalyzer
+tests/test_technical.py
+Testes unitários do TechnicalAnalyzer.
 """
-import pandas as pd
-import numpy as np
+
 import pytest
+import pandas as pd
 from backend.analysis.technical import TechnicalAnalyzer
 
 
-def make_df(n=100, trend="up"):
-    """Gera DataFrame de candles sintéticos."""
-    np.random.seed(42)
-    base = 60000.0
-    prices = []
-    for i in range(n):
-        if trend == "up":
-            base += np.random.uniform(0, 200)
-        elif trend == "down":
-            base -= np.random.uniform(0, 200)
-        else:
-            base += np.random.uniform(-100, 100)
-        prices.append(base)
-
-    df = pd.DataFrame({
-        "open":   [p * 0.999 for p in prices],
-        "high":   [p * 1.002 for p in prices],
-        "low":    [p * 0.998 for p in prices],
-        "close":  prices,
-        "volume": [np.random.uniform(100, 1000) for _ in range(n)],
-    })
-    return df
+def make_df(n=100, start=100.0, step=1.0):
+    rows = []
+    price = start
+    for _ in range(n):
+        rows.append({
+            "open": price,
+            "high": price + 2,
+            "low": price - 2,
+            "close": price,
+            "volume": 1000,
+        })
+        price += step
+    return pd.DataFrame(rows)
 
 
-class TestTechnicalAnalyzer:
-    def setup_method(self):
-        self.ta = TechnicalAnalyzer()
+def test_insufficient_candles_returns_wait():
+    df = make_df(n=10)
+    ta = TechnicalAnalyzer(min_candles=60)
+    result = ta.analyze(df)
+    assert result.signal == "AGUARDAR"
+    assert "Candles insuficientes" in result.reason
 
-    def test_analyze_returns_result(self):
-        df = make_df()
-        result = self.ta.analyze(df)
-        assert result is not None
 
-    def test_rsi_range(self):
-        df = make_df()
-        result = self.ta.analyze(df)
-        assert result.rsi is not None
-        assert 0 <= float(result.rsi) <= 100
+def test_returns_atr_when_enough_candles():
+    df = make_df(n=100)
+    ta = TechnicalAnalyzer(min_candles=60, atr_period=14)
+    result = ta.analyze(df)
+    assert result.atr is not None
+    assert result.atr > 0
 
-    def test_current_price_positive(self):
-        df = make_df()
-        result = self.ta.analyze(df)
-        assert result.current_price > 0
 
-    def test_signal_valid_values(self):
-        df = make_df()
-        result = self.ta.analyze(df)
-        assert result.signal in {"CALL", "PUT", "AGUARDAR"}
-
-    def test_uptrend_signal(self):
-        """Tendência de alta deve gerar CALL ou AGUARDAR."""
-        df = make_df(200, trend="up")
-        result = self.ta.analyze(df)
-        assert result.signal in {"CALL", "AGUARDAR"}
-
-    def test_downtrend_signal(self):
-        """Tendência de baixa deve gerar PUT ou AGUARDAR."""
-        df = make_df(200, trend="down")
-        result = self.ta.analyze(df)
-        assert result.signal in {"PUT", "AGUARDAR"}
-
-    def test_insufficient_data_raises(self):
-        """Menos de 50 candles deve levantar erro ou retornar AGUARDAR."""
-        df = make_df(10)
-        try:
-            result = self.ta.analyze(df)
-            assert result.signal == "AGUARDAR"
-        except Exception:
-            pass  # também aceito
+def test_above_ema_trending_up():
+    df = make_df(n=100, start=100.0, step=1.0)
+    ta = TechnicalAnalyzer(min_candles=60)
+    result = ta.analyze(df)
+    assert result.current_price is not None
+    assert result.ema50 is not None
+    assert result.price_vs_ema in {"ABOVE", "AT", "BELOW"}

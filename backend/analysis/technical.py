@@ -1,12 +1,15 @@
 """
 Roboto — Análise Técnica
-Calcula RSI, EMA50, MACD e Bollinger Bands usando pandas-ta-classic.
+Calcula RSI, EMA50, MACD, Bollinger Bands e ATR usando pandas-ta-classic.
 Gera sinal técnico: CALL | PUT | AGUARDAR
 
 Estratégia (scoring 4 indicadores, min_score=2):
     CALL: RSI<overbought | MACD bullish | Preço>EMA50 | BB lower
     PUT:  RSI>oversold   | MACD bearish | Preço<EMA50 | BB upper
     score >= min_score e maior que o oposto → CALL ou PUT
+
+Issue #7:
+    - Expõe ATR(14) no TechnicalResult para permitir stop loss dinâmico.
 """
 
 import logging
@@ -30,6 +33,7 @@ class TechnicalResult:
     ema50: Optional[float] = None
     bb_upper: Optional[float] = None
     bb_lower: Optional[float] = None
+    atr: Optional[float] = None
     current_price: Optional[float] = None
     price_vs_ema: Optional[str] = None
     price_vs_bb: Optional[str] = None
@@ -45,6 +49,7 @@ class TechnicalAnalyzer:
         rsi_oversold:   Nível de sobrevenda (padrão: 30)
         min_score:      Pontuação mínima para gerar sinal (padrão: 2)
         min_candles:    Mínimo de candles (padrão: 60)
+        atr_period:     Período do ATR (padrão: 14)
     """
 
     def __init__(
@@ -53,6 +58,7 @@ class TechnicalAnalyzer:
         ema_period: int = 50,
         bb_period: int = 20,
         bb_std: float = 2.0,
+        atr_period: int = 14,
         rsi_overbought: int = 70,
         rsi_oversold: int = 30,
         min_score: int = 2,
@@ -62,6 +68,7 @@ class TechnicalAnalyzer:
         self.ema_period = ema_period
         self.bb_period = bb_period
         self.bb_std = bb_std
+        self.atr_period = atr_period
         self.rsi_overbought = rsi_overbought
         self.rsi_oversold = rsi_oversold
         self.min_score = min_score
@@ -106,6 +113,11 @@ class TechnicalAnalyzer:
                     bb_upper = float(bb_df[uc[0]].iloc[-1])
                     bb_lower = float(bb_df[lc[0]].iloc[-1])
 
+            atr = None
+            atr_s = ta.atr(df["high"], df["low"], df["close"], length=self.atr_period)
+            if atr_s is not None and not atr_s.empty:
+                atr = float(atr_s.iloc[-1])
+
             price = float(df["close"].iloc[-1])
             price_vs_ema = self._price_vs_ema(price, ema50)
             price_vs_bb  = self._price_vs_bb(price, bb_upper, bb_lower)
@@ -124,6 +136,7 @@ class TechnicalAnalyzer:
                 ema50=round(ema50, 2) if ema50 is not None else None,
                 bb_upper=round(bb_upper, 2) if bb_upper is not None else None,
                 bb_lower=round(bb_lower, 2) if bb_lower is not None else None,
+                atr=round(atr, 4) if atr is not None else None,
                 current_price=round(price, 2),
                 price_vs_ema=price_vs_ema,
                 price_vs_bb=price_vs_bb,
@@ -136,7 +149,6 @@ class TechnicalAnalyzer:
         call_score, call_reasons = 0, []
         put_score,  put_reasons  = 0, []
 
-        # 1. RSI
         if rsi is not None:
             if rsi < self.rsi_overbought:
                 call_score += 1
@@ -145,7 +157,6 @@ class TechnicalAnalyzer:
                 put_score += 1
                 put_reasons.append(f"RSI={rsi:.1f}>{self.rsi_oversold}")
 
-        # 2. MACD (posição relativa ou cruzamento)
         if macd_val is not None and macd_sig is not None:
             if macd_cross == "UP" or macd_val > macd_sig:
                 call_score += 1
@@ -154,7 +165,6 @@ class TechnicalAnalyzer:
                 put_score += 1
                 put_reasons.append("MACD bearish")
 
-        # 3. EMA50
         if price_vs_ema == "ABOVE":
             call_score += 1
             call_reasons.append("Preço>EMA50")
@@ -162,7 +172,6 @@ class TechnicalAnalyzer:
             put_score += 1
             put_reasons.append("Preço<EMA50")
 
-        # 4. Bollinger Bands
         if price_vs_bb == "LOWER":
             call_score += 1
             call_reasons.append("BB lower")
@@ -170,7 +179,6 @@ class TechnicalAnalyzer:
             put_score += 1
             put_reasons.append("BB upper")
 
-        # Vence o maior se atingir min_score
         if call_score >= self.min_score and call_score > put_score:
             return "CALL", " | ".join(call_reasons)
         if put_score >= self.min_score and put_score > call_score:

@@ -3,18 +3,18 @@ Roboto — Risk Manager
 Controla stop loss, take profit, max trades/dia e drawdown máximo.
 
 Regras de proteção:
-    - Stop loss por trade:       5% (padrão)
+    - Stop loss por trade:       5% (padrão) OU ATR dinâmico
     - Take profit por trade:     10% (padrão)
     - Max trades por dia:        10 (padrão)
     - Drawdown máximo:           20% (pausa automática)
     - Só opera sinais FORTES por padrão
 
-Uso:
-    rm = RiskManager(balance=10000.0)
-    ok, reason = rm.can_trade(decision)
-    if ok:
-        trade = rm.open_trade(decision)
-        rm.close_trade(trade, exit_price)
+Issue #7:
+    - Stop loss pode usar ATR (Average True Range) quando disponível.
+    - Fórmula:
+        CALL -> stop_loss = entry_price - (atr * atr_multiplier)
+        PUT  -> stop_loss = entry_price + (atr * atr_multiplier)
+    - Se ATR não estiver disponível, cai para o SL percentual atual.
 """
 
 import logging
@@ -44,6 +44,8 @@ class Trade:
     closed_at: Optional[str] = None
     result: str = "PENDING"     # WIN | LOSS | PENDING
     pnl_pct: Optional[float] = None
+    stop_loss_mode: str = "pct" # 'pct' | 'atr'
+    atr_at_entry: Optional[float] = None
 
     def is_open(self) -> bool:
         return self.result == "PENDING"
@@ -66,6 +68,8 @@ class RiskManager:
         max_trades_day:   Máx trades por dia (padrão: 10)
         max_drawdown_pct: Drawdown máximo antes de pausar (padrão: 20.0)
         only_strong:      Só opera sinais FORTES (padrão: True)
+        use_atr_stop:     Quando True, usa ATR para o stop loss se disponível
+        atr_multiplier:   Multiplicador do ATR para calcular distância do stop
     """
 
     def __init__(
@@ -76,6 +80,8 @@ class RiskManager:
         max_trades_day: int = 10,
         max_drawdown_pct: float = 20.0,
         only_strong: bool = True,
+        use_atr_stop: bool = False,
+        atr_multiplier: float = 2.0,
     ):
         self.initial_balance = balance
         self.balance = balance
@@ -85,31 +91,21 @@ class RiskManager:
         self.max_trades_day = max_trades_day
         self.max_drawdown_pct = max_drawdown_pct
         self.only_strong = only_strong
+        self.use_atr_stop = use_atr_stop
+        self.atr_multiplier = atr_multiplier
 
         self._paused = False
         self._pause_reason = ""
         self._trades: list[Trade] = []
         self._open_trade: Optional[Trade] = None
         self._today_count = 0
-        self._today_date: Optional[date] = None  # inicializado no primeiro can_trade
-
-    # ----------------------------------------------------------
-    # VERIFICAÇÃO
-    # ----------------------------------------------------------
+        self._today_date: Optional[date] = None
 
     def can_trade(
         self,
         decision: SignalDecision,
         current_date: Optional[date] = None,
     ) -> tuple[bool, str]:
-        """
-        Verifica se é possível abrir um novo trade.
-
-        Args:
-            decision:     Decisão do SignalCombiner
-            current_date: Data do candle atual (usar no backtest para reset diário correto).
-                          Se None, usa date.today() (modo live).
-        """
         if self._paused:
             return False, f"Bot pausado: {self._pause_reason}"
 
@@ -133,10 +129,6 @@ class RiskManager:
 
         return True, ""
 
-    # ----------------------------------------------------------
-    # ABRIR TRADE
-    # ----------------------------------------------------------
-
     def open_trade(
         self,
         decision: SignalDecision,
@@ -146,13 +138,10 @@ class RiskManager:
 
         price = decision.current_price
         direction = decision.direction()
+        atr_value = getattr(decision, "atr", None)
 
-        if direction == "CALL":
-            sl = round(price * (1 - self.stop_loss_pct / 100), 2)
-            tp = round(price * (1 + self.take_profit_pct / 100), 2)
-        else:  # PUT
-            sl = round(price * (1 + self.stop_loss_pct / 100), 2)
-            tp = round(price * (1 - self.take_profit_pct / 100), 2)
+        sl, sl_mode = self._calc_stop_loss(price=price, direction=direction, atr_value=atr_value)
+        tp = self._calc_take_profit(price=price, direction=direction)
 
         trade = Trade(
             id=str(uuid4())[:8],
@@ -164,26 +153,25 @@ class RiskManager:
             take_profit=tp,
             opened_at=datetime.now(timezone.utc).isoformat(),
             signal_decision=decision,
+            stop_loss_mode=sl_mode,
+            atr_at_entry=atr_value if sl_mode == "atr" else None,
         )
 
         self._open_trade = trade
         self._trades.append(trade)
         self._today_count += 1
 
+        atr_note = f" | ATR={atr_value} x {self.atr_multiplier}" if sl_mode == "atr" else ""
         logger.info(
             f"[Trade ABERTO] {direction} {decision.symbol} @ ${price:,.2f} "
-            f"| SL=${sl:,.2f} | TP=${tp:,.2f} | ID={trade.id}"
+            f"| SL=${sl:,.2f} ({sl_mode}) | TP=${tp:,.2f} | ID={trade.id}{atr_note}"
         )
         return trade
-
-    # ----------------------------------------------------------
-    # FECHAR TRADE
-    # ----------------------------------------------------------
 
     def close_trade(self, trade: Trade, exit_price: float) -> Trade:
         if trade.direction == "CALL":
             pnl_pct = (exit_price - trade.entry_price) / trade.entry_price * 100
-        else:  # PUT
+        else:
             pnl_pct = (trade.entry_price - exit_price) / trade.entry_price * 100
 
         trade.exit_price = exit_price
@@ -209,26 +197,18 @@ class RiskManager:
 
         return trade
 
-    # ----------------------------------------------------------
-    # VERIFICAÇÃO DE SL/TP
-    # ----------------------------------------------------------
-
     def check_exit(self, trade: Trade, current_price: float) -> Optional[str]:
         if trade.direction == "CALL":
             if current_price <= trade.stop_loss:
                 return "SL"
             if current_price >= trade.take_profit:
                 return "TP"
-        else:  # PUT
+        else:
             if current_price >= trade.stop_loss:
                 return "SL"
             if current_price <= trade.take_profit:
                 return "TP"
         return None
-
-    # ----------------------------------------------------------
-    # PAUSA / RESUME
-    # ----------------------------------------------------------
 
     def pause(self, reason: str = "Manual"):
         self._pause(reason)
@@ -240,10 +220,6 @@ class RiskManager:
 
     def is_paused(self) -> bool:
         return self._paused
-
-    # ----------------------------------------------------------
-    # STATUS
-    # ----------------------------------------------------------
 
     def status(self) -> dict:
         self._reset_daily_count_if_needed()
@@ -259,10 +235,6 @@ class RiskManager:
             "total_trades": len(self._trades),
         }
 
-    # ----------------------------------------------------------
-    # HELPERS
-    # ----------------------------------------------------------
-
     def _pause(self, reason: str):
         self._paused = True
         self._pause_reason = reason
@@ -274,14 +246,26 @@ class RiskManager:
         return max((self.peak_balance - self.balance) / self.peak_balance * 100, 0.0)
 
     def _reset_daily_count_if_needed(self, current_date: Optional[date] = None):
-        """Reseta contador diário.
-        No backtest, passa current_date=candle_timestamp.date() para simular corretamente.
-        No modo live, deixa None e usa date.today().
-        """
         today = current_date or date.today()
         if self._today_date != today:
             self._today_date = today
             self._today_count = 0
+
+    def _calc_stop_loss(self, price: float, direction: str, atr_value: Optional[float]) -> tuple[float, str]:
+        if self.use_atr_stop and atr_value is not None and atr_value > 0:
+            distance = atr_value * self.atr_multiplier
+            if direction == "CALL":
+                return round(price - distance, 2), "atr"
+            return round(price + distance, 2), "atr"
+
+        if direction == "CALL":
+            return round(price * (1 - self.stop_loss_pct / 100), 2), "pct"
+        return round(price * (1 + self.stop_loss_pct / 100), 2), "pct"
+
+    def _calc_take_profit(self, price: float, direction: str) -> float:
+        if direction == "CALL":
+            return round(price * (1 + self.take_profit_pct / 100), 2)
+        return round(price * (1 - self.take_profit_pct / 100), 2)
 
     @property
     def trades(self) -> list[Trade]:
@@ -297,7 +281,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     from backend.analysis.signals import SignalDecision
 
-    rm = RiskManager(balance=10000.0, only_strong=True)
+    rm = RiskManager(balance=10000.0, only_strong=True, use_atr_stop=True, atr_multiplier=2.0)
 
     decision = SignalDecision(
         final="CALL_FORTE",
@@ -312,6 +296,7 @@ if __name__ == "__main__":
         sentiment_score=0.87,
         news_count=5,
     )
+    decision.atr = 250.0
 
     ok, reason = rm.can_trade(decision)
     print(f"Pode operar? {ok} | {reason or 'ok'}")
