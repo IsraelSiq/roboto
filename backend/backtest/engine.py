@@ -1,6 +1,11 @@
 """
 Roboto — Backtest Engine
 Roda a estratégia completa (técnico + sentiment simulado) sobre dados históricos.
+
+Issue #6:
+    - Valida explicitamente suporte a PUT no backtest
+    - Mantém compatibilidade com o novo SentimentResult (source/raw_scores)
+    - Permite simular sentiment negative para gerar PUT_FORTE
 """
 
 import logging
@@ -75,8 +80,11 @@ class BacktestEngine:
         only_strong:     Apenas sinais FORTES (padrão: True)
         stop_loss_pct:   Stop loss % (padrão: 5.0)
         take_profit_pct: Take profit % (padrão: 10.0)
+        max_trades_day:  Máximo de trades por dia
         sentiment_mode:  'neutral' | 'positive' | 'negative' (padrão: 'positive')
     """
+
+    VALID_SENTIMENT_MODES = {"neutral", "positive", "negative"}
 
     def __init__(
         self,
@@ -89,6 +97,12 @@ class BacktestEngine:
         max_trades_day: int = 10,
         sentiment_mode: str = "positive",
     ):
+        if sentiment_mode not in self.VALID_SENTIMENT_MODES:
+            raise ValueError(
+                f"sentiment_mode inválido: {sentiment_mode}. "
+                f"Use um de {sorted(self.VALID_SENTIMENT_MODES)}"
+            )
+
         self.symbol = symbol
         self.interval = interval
         self.initial_balance = balance
@@ -101,12 +115,23 @@ class BacktestEngine:
         self.ta = TechnicalAnalyzer()
         self.combiner = SignalCombiner(symbol=symbol, timeframe=interval)
 
+        # Compatível com PR #11: expõe source/raw_scores no sentiment simulado.
         self._sentiment = SentimentResult(
             signal=sentiment_mode,
-            score=0.5,
+            score=0.85 if sentiment_mode != "neutral" else 0.50,
             news_count=0,
             reason=f"backtest/{sentiment_mode}",
+            source="backtest_mock",
+            raw_scores=self._build_mock_raw_scores(sentiment_mode),
         )
+
+    @staticmethod
+    def _build_mock_raw_scores(mode: str) -> dict:
+        if mode == "positive":
+            return {"positive": 0.85, "negative": 0.10, "neutral": 0.05}
+        if mode == "negative":
+            return {"positive": 0.10, "negative": 0.85, "neutral": 0.05}
+        return {"positive": 0.20, "negative": 0.20, "neutral": 0.60}
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
         if df.empty or len(df) < MIN_CANDLES:
@@ -137,10 +162,8 @@ class BacktestEngine:
             current_candle = df.iloc[i]
             current_price = float(current_candle["close"])
             ts = str(current_candle["open_time"])
-            # ⭐ data do candle simulado — corrige o bug #1
             candle_date = pd.Timestamp(current_candle["open_time"]).date()
 
-            # Verifica SL/TP do trade aberto
             if open_trade is not None:
                 exit_reason = rm.check_exit(open_trade, current_price)
                 if exit_reason == "SL":
@@ -152,21 +175,18 @@ class BacktestEngine:
 
             equity_curve.append((ts, rm.balance))
 
-            # Analisa apenas a cada 5 candles para simular ciclo do bot
             if i % 5 != 0:
                 continue
 
             if rm.is_paused():
                 continue
 
-            # Análise técnica
             try:
                 tech = self.ta.analyze(window)
             except Exception as e:
                 logger.debug(f"[Backtest] Erro técnico no candle {i}: {e}")
                 continue
 
-            # Combina com sentiment simulado
             try:
                 decision = self.combiner.combine(tech, self._sentiment)
             except Exception as e:
@@ -175,13 +195,15 @@ class BacktestEngine:
 
             total_signals += 1
 
-            # Tenta abrir trade passando candle_date para reset diário correto
             if open_trade is None:
                 ok, reason = rm.can_trade(decision, current_date=candle_date)
                 if ok:
                     open_trade = rm.open_trade(decision, current_date=candle_date)
+                    logger.debug(
+                        f"[Backtest] Trade aberto: direction={open_trade.direction} "
+                        f"entry={open_trade.entry_price} sl={open_trade.stop_loss} tp={open_trade.take_profit}"
+                    )
 
-        # Fecha trade ainda aberto ao final
         if open_trade is not None:
             rm.close_trade(open_trade, float(df["close"].iloc[-1]))
 
