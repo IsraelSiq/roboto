@@ -1,11 +1,19 @@
 """
 Smoke test — RobotoBot (integração MVP)
 Roda o loop por 2 ciclos com módulos externos mockados.
+
+Esses testes são marcados como @pytest.mark.slow pois carregam o FinBERT
+e executam o loop completo do bot (~4-5 min cada).
+
+Para excluir da suite rápida:
+    pytest tests/ -m 'not slow'
 """
 import pytest
 from unittest.mock import patch, MagicMock
 import pandas as pd
 import numpy as np
+
+pytestmark = pytest.mark.slow
 
 
 def make_fake_candles(n=120):
