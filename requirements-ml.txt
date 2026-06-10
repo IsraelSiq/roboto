@@ -1,0 +1,5 @@
+# Roboto — dependências ML (FinBERT)
+# Instalar apenas no ambiente live/producao:
+#   pip install -r requirements.txt -r requirements-ml.txt
+transformers==4.40.2
+torch==2.3.0
