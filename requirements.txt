@@ -1,6 +1,6 @@
 # Roboto — dependências base (sem ML pesado)
 python-binance==1.0.19
-pandas==2.2.2
+pandas==2.2.3
 pandas-ta-classic==0.3.14b2
 newsapi-python==0.2.7
 python-dotenv==1.0.1
