@@ -56,7 +56,16 @@ if os.path.isdir(_frontend_path):
 _bot: Optional[RobotoBot] = None
 _bot_thread: Optional[threading.Thread] = None
 _last_signal: Optional[dict] = None
-_client = BinanceClient()
+
+# Lazy init — não instancia na importação para não travar o startup
+_client: Optional[BinanceClient] = None
+
+def _get_client() -> BinanceClient:
+    global _client
+    if _client is None:
+        _client = BinanceClient()
+    return _client
+
 
 # Supabase (lazy init)
 _db = None
@@ -232,7 +241,7 @@ def get_metrics():
 def get_candles(symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100):
     """Últimos candles do símbolo."""
     try:
-        df = _client.get_candles(symbol=symbol, interval=interval, limit=limit)
+        df = _get_client().get_candles(symbol=symbol, interval=interval, limit=limit)
         if df.empty:
             raise HTTPException(status_code=502, detail="Nenhum candle recebido da Binance")
         df_out = df[["open_time", "open", "high", "low", "close", "volume"]].tail(50).copy()
@@ -249,7 +258,7 @@ def get_candles(symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100)
 def get_price(symbol: str = "BTCUSDT"):
     """Preço atual do símbolo."""
     try:
-        price = _client.get_price(symbol=symbol)
+        price = _get_client().get_price(symbol=symbol)
         return {"symbol": symbol, "price": price}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
