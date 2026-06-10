@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ '**' ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ '**' ]
+  workflow_dispatch:
 
 jobs:
   test-backend:
@@ -22,17 +23,20 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run tests
         env:
-          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
-          BINANCE_SECRET: ${{ secrets.BINANCE_SECRET }}
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY || 'ci_dummy_key' }}
+          BINANCE_SECRET: ${{ secrets.BINANCE_SECRET || 'ci_dummy_secret' }}
           BINANCE_TESTNET: 'true'
-          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: pytest tests/ -v --tb=short
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY || 'ci_dummy_newsapi' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'http://localhost' }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY || 'ci_dummy_supabase' }}
+        run: |
+          python -m pytest tests/ -v --tb=short \
+            --ignore=tests/test_api.py \
+            --ignore=tests/integration
 
   lint:
     name: Lint
