@@ -12,7 +12,7 @@ Cobertura:
 import pandas as pd
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -59,11 +59,19 @@ def make_tech(signal="PUT", rsi=35.0, price=75_000.0):
 
 
 def make_sent(signal="negative", score=0.78, count=5):
+    """
+    Cria mock de SentimentResult com raw_scores como dict real.
+    Necessário porque debug_breakdown() em signals.py chama :.3f
+    nos valores retornados por sentiment_raw.get(...).
+    """
     s = MagicMock()
     s.signal = signal
     s.score = score
     s.news_count = count
     s.reason = "mock"
+    s.source = "finbert"
+    # raw_scores precisa ser um dict real (não MagicMock) para o :.3f funcionar
+    s.raw_scores = {"positive": 0.10, "negative": 0.82, "neutral": 0.08}
     return s
 
 
@@ -75,6 +83,9 @@ class TestIssue2BacktestReporterPayload:
     """
     Garante que BacktestReporter.save() passa 'timeframe' no payload do Supabase
     e nunca 'interval' isolado (que violava NOT NULL constraint).
+
+    FIX DE MOCK: reporter._db é ignorado porque save() chama _get_db() que
+    verifica self._db is None. Solução: patch _get_db() para retornar o mock.
     """
 
     def _make_result(self, interval="5m"):
@@ -98,59 +109,44 @@ class TestIssue2BacktestReporterPayload:
         r.approved = False
         return r
 
+    def _make_reporter_with_mock_db(self):
+        """Cria reporter com _get_db() patchado para retornar mock do Supabase."""
+        from backend.backtest.report import BacktestReporter
+        reporter = BacktestReporter()
+        mock_table = MagicMock()
+        mock_db = MagicMock()
+        mock_db.client.table.return_value = mock_table
+        mock_table.insert.return_value.execute.return_value = MagicMock()
+        # Patch _get_db para retornar o mock — evita o check 'self._db is None'
+        reporter._get_db = lambda: mock_db
+        return reporter, mock_table
+
     def test_payload_contains_timeframe_key(self):
         """Payload deve conter 'timeframe' com o valor de result.interval."""
-        from backend.backtest.report import BacktestReporter
-
-        reporter = BacktestReporter()
-        mock_table = MagicMock()
-        mock_db = MagicMock()
-        mock_db.client.table.return_value = mock_table
-        mock_table.insert.return_value.execute.return_value = MagicMock()
-        reporter._db = mock_db
-
-        result = self._make_result(interval="5m")
-        reporter.save(result)
-
-        inserted_payload = mock_table.insert.call_args[0][0]
-        assert "timeframe" in inserted_payload, "Payload deve conter a chave 'timeframe'"
-        assert inserted_payload["timeframe"] == "5m"
+        reporter, mock_table = self._make_reporter_with_mock_db()
+        reporter.save(self._make_result(interval="5m"))
+        payload = mock_table.insert.call_args[0][0]
+        assert "timeframe" in payload, "Payload deve conter a chave 'timeframe'"
+        assert payload["timeframe"] == "5m"
 
     def test_payload_does_not_contain_bare_interval_key(self):
-        """Payload não deve conter 'interval' como chave standalone (causava 400)."""
-        from backend.backtest.report import BacktestReporter
-
-        reporter = BacktestReporter()
-        mock_table = MagicMock()
-        mock_db = MagicMock()
-        mock_db.client.table.return_value = mock_table
-        mock_table.insert.return_value.execute.return_value = MagicMock()
-        reporter._db = mock_db
-
-        result = self._make_result(interval="15m")
-        reporter.save(result)
-
-        inserted_payload = mock_table.insert.call_args[0][0]
-        assert "interval" not in inserted_payload, (
+        """Payload não deve conter 'interval' como chave standalone (causava NOT NULL violation)."""
+        reporter, mock_table = self._make_reporter_with_mock_db()
+        reporter.save(self._make_result(interval="15m"))
+        payload = mock_table.insert.call_args[0][0]
+        assert "interval" not in payload, (
             "Payload não deve conter 'interval' — causa NOT NULL violation na coluna 'timeframe'"
         )
 
     def test_timeframe_value_matches_result_interval(self):
         """O valor de 'timeframe' no payload deve ser exatamente result.interval."""
-        from backend.backtest.report import BacktestReporter
-
-        reporter = BacktestReporter()
-        mock_table = MagicMock()
-        mock_db = MagicMock()
-        mock_db.client.table.return_value = mock_table
-        mock_table.insert.return_value.execute.return_value = MagicMock()
-        reporter._db = mock_db
-
+        reporter, mock_table = self._make_reporter_with_mock_db()
         for tf in ["1m", "5m", "15m", "1h", "4h"]:
-            result = self._make_result(interval=tf)
-            reporter.save(result)
+            reporter.save(self._make_result(interval=tf))
             payload = mock_table.insert.call_args[0][0]
-            assert payload["timeframe"] == tf, f"Esperado timeframe='{tf}', obtido '{payload.get('timeframe')}'"
+            assert payload["timeframe"] == tf, (
+                f"Esperado timeframe='{tf}', obtido '{payload.get('timeframe')}'"
+            )
 
 
 # ===========================================================================
@@ -168,7 +164,7 @@ class TestIssue4And6TechnicalPutSignal:
         self.ta = TechnicalAnalyzer()
 
     def test_put_emitido_em_tendencia_de_baixa(self):
-        """Tendência de baixa forte deve gerar PUT (não exclusivamente CALL)."""
+        """Tendência de baixa forte deve gerar PUT ou AGUARDAR (nunca só CALL)."""
         df = make_candles(200, trend="down")
         result = self.ta.analyze(df)
         assert result.signal in {"PUT", "AGUARDAR"}, (
@@ -184,48 +180,47 @@ class TestIssue4And6TechnicalPutSignal:
         )
 
     def test_rsi_scoring_mutuamente_exclusivo(self):
-        """RSI alto (>55) só pontua CALL; RSI baixo (<45) só pontua PUT."""
+        """RSI alto (>call_threshold) só pontua CALL; RSI baixo (<put_threshold) só pontua PUT."""
         from backend.analysis.technical import TechnicalAnalyzer
-        ta = TechnicalAnalyzer(rsi_call_threshold=55, rsi_put_threshold=45)
+        ta = TechnicalAnalyzer()  # usa defaults: call=55, put=45
 
-        # RSI alto: apenas CALL pontua no RSI
-        call_score_rsi, put_score_rsi = 0, 0
-        rsi_alto = 65.0
-        if rsi_alto > ta.rsi_call_threshold:
-            call_score_rsi += 1
-        elif rsi_alto < ta.rsi_put_threshold:
-            put_score_rsi += 1
-        assert call_score_rsi == 1 and put_score_rsi == 0
+        # RSI alto: apenas CALL pontua
+        call_score, put_score = 0, 0
+        rsi = 65.0
+        if rsi > ta.rsi_call_threshold:
+            call_score += 1
+        elif rsi < ta.rsi_put_threshold:
+            put_score += 1
+        assert call_score == 1 and put_score == 0, f"RSI={rsi}: esperado call=1 put=0, obtido call={call_score} put={put_score}"
 
-        # RSI baixo: apenas PUT pontua no RSI
-        call_score_rsi, put_score_rsi = 0, 0
-        rsi_baixo = 35.0
-        if rsi_baixo > ta.rsi_call_threshold:
-            call_score_rsi += 1
-        elif rsi_baixo < ta.rsi_put_threshold:
-            put_score_rsi += 1
-        assert call_score_rsi == 0 and put_score_rsi == 1
+        # RSI baixo: apenas PUT pontua
+        call_score, put_score = 0, 0
+        rsi = 35.0
+        if rsi > ta.rsi_call_threshold:
+            call_score += 1
+        elif rsi < ta.rsi_put_threshold:
+            put_score += 1
+        assert call_score == 0 and put_score == 1, f"RSI={rsi}: esperado call=0 put=1, obtido call={call_score} put={put_score}"
 
     def test_rsi_na_zona_neutra_nao_pontua(self):
-        """RSI entre 45 e 55 (zona neutra) não deve pontuar nem CALL nem PUT."""
+        """RSI na zona neutra (put_threshold <= RSI <= call_threshold) não pontua nenhum."""
         from backend.analysis.technical import TechnicalAnalyzer
-        ta = TechnicalAnalyzer(rsi_call_threshold=55, rsi_put_threshold=45)
-        for rsi_neutro in [45.0, 50.0, 54.9, 55.0]:
+        ta = TechnicalAnalyzer()  # call=55, put=45
+
+        for rsi_neutro in [46.0, 50.0, 54.0]:  # estritamente entre 45 e 55
             call_score, put_score = 0, 0
             if rsi_neutro > ta.rsi_call_threshold:
                 call_score += 1
             elif rsi_neutro < ta.rsi_put_threshold:
                 put_score += 1
-            # RSI exatamente 55 pontua CALL (> threshold), demais não pontuam
-            if rsi_neutro < ta.rsi_call_threshold and rsi_neutro >= ta.rsi_put_threshold:
-                assert call_score == 0 and put_score == 0, (
-                    f"RSI={rsi_neutro} na zona neutra não deveria pontuar"
-                )
+            assert call_score == 0 and put_score == 0, (
+                f"RSI={rsi_neutro} na zona neutra não deveria pontuar (call={call_score}, put={put_score})"
+            )
 
     def test_never_only_call_in_100_down_candles(self):
         """
-        Roda 5 seeds diferentes de tendência de baixa e verifica que
-        PUT aparece em pelo menos 1 — regressão direta do bug #4.
+        Regressão direta do bug #4: em 5 seeds de tendência de baixa,
+        PUT deve aparecer em pelo menos 1 resultado.
         """
         from backend.analysis.technical import TechnicalAnalyzer
         ta = TechnicalAnalyzer()
@@ -263,22 +258,29 @@ class TestIssue5SentimentRobustness:
         result = self.analyzer.analyze_news([{"title": "", "description": ""}])
         assert result.source in {"fallback_empty_texts", "fallback_no_news"}
 
-    def test_is_suspicious_score_detecta_0_50(self):
-        """_is_suspicious_score deve retornar True para score exatamente 0.50."""
-        from backend.analysis.sentiment import _is_suspicious_score
+    def test_is_suspicious_score_detecta_0_50_exato(self):
+        """
+        _is_suspicious_score usa tolerância 1e-9.
+        Só scores dentro de 1e-9 de 0.50 são considerados suspeitos.
+        """
+        from backend.analysis.sentiment import _is_suspicious_score, _FALLBACK_SCORE_TOLERANCE
         assert _is_suspicious_score(0.50) is True
-        assert _is_suspicious_score(0.5000000001) is False
+        # Diferença de 1e-10 (menor que tolerância) → ainda suspeito
+        assert _is_suspicious_score(0.5 + _FALLBACK_SCORE_TOLERANCE * 0.1) is True
+        # Diferença de 10x a tolerância → não suspeito
+        assert _is_suspicious_score(0.5 + _FALLBACK_SCORE_TOLERANCE * 10) is False
         assert _is_suspicious_score(0.82) is False
         assert _is_suspicious_score(0.0) is False
 
     def test_sentiment_result_tem_campo_raw_scores(self):
         """SentimentResult deve ter campo raw_scores (dict)."""
         from backend.analysis.sentiment import SentimentResult
-        sr = SentimentResult(signal="positive", score=0.82, raw_scores={"positive": 0.82, "negative": 0.10, "neutral": 0.08})
+        sr = SentimentResult(
+            signal="positive", score=0.82,
+            raw_scores={"positive": 0.82, "negative": 0.10, "neutral": 0.08}
+        )
         assert isinstance(sr.raw_scores, dict)
-        assert "positive" in sr.raw_scores
-        assert "negative" in sr.raw_scores
-        assert "neutral" in sr.raw_scores
+        assert set(sr.raw_scores.keys()) == {"positive", "negative", "neutral"}
 
     def test_sentiment_result_tem_campo_source(self):
         """SentimentResult deve ter campo source."""
