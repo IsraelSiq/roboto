@@ -1,12 +1,11 @@
 """
 Testes — Relatório P&L standalone (issue #19)
-Cobre calculo de P&L, export CSV e resumo textual.
+Cobre cálculo de P&L, export CSV e resumo textual.
 """
 import os
 import csv
 import tempfile
 import pytest
-from unittest.mock import patch
 from backend.risk.metrics import PerformanceMetrics
 from backend.risk.manager import RiskManager
 from backend.analysis.signals import SignalDecision
@@ -21,7 +20,6 @@ def make_decision(signal="CALL_FORTE", price=60000.0):
 
 
 def build_trades(wins=3, losses=2, balance=10000.0):
-    """Gera lista de trades fechados com wins e losses."""
     rm = RiskManager(balance=balance, only_strong=False)
     for i in range(wins + losses):
         trade = rm.open_trade(make_decision())
@@ -56,50 +54,42 @@ class TestPerformanceMetrics:
     def test_net_pnl_positive_majority_wins(self):
         trades = build_trades(wins=4, losses=1)
         m = PerformanceMetrics(trades).calculate()
-        assert m.net_pnl > 0
+        assert m.total_pnl_pct > 0  # atributo real
 
     def test_net_pnl_negative_majority_losses(self):
         trades = build_trades(wins=1, losses=4)
         m = PerformanceMetrics(trades).calculate()
-        assert m.net_pnl < 0
+        assert m.total_pnl_pct < 0  # atributo real
 
     def test_summary_returns_string(self):
         trades = build_trades(wins=2, losses=2)
         m = PerformanceMetrics(trades).calculate()
-        summary = m.summary()
-        assert isinstance(summary, str)
-        assert len(summary) > 0
+        assert isinstance(m.summary(), str)
+        assert len(m.summary()) > 0
 
     def test_summary_contains_key_fields(self):
         trades = build_trades(wins=3, losses=1)
-        m = PerformanceMetrics(trades).calculate()
-        s = m.summary().lower()
+        s = PerformanceMetrics(trades).calculate().summary().lower()
         assert any(kw in s for kw in ["win", "trade", "pnl", "resultado", "taxa"])
 
 
 class TestPnLReport:
-    """Testa o script standalone de relatório P&L (backend/report/pnl.py)."""
-
     def test_report_importable(self):
-        """Módulo de relatório deve ser importável."""
         try:
             from backend.report import pnl  # noqa
         except ImportError:
             pytest.skip("backend.report.pnl ainda não implementado")
 
     def test_report_generates_csv(self):
-        """generate_csv deve criar um arquivo CSV válido."""
         try:
             from backend.report.pnl import generate_csv
         except ImportError:
             pytest.skip("generate_csv ainda não implementado")
-
         trades = build_trades(wins=2, losses=1)
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = os.path.join(tmpdir, "report.csv")
             generate_csv(trades, output_path)
             assert os.path.exists(output_path)
             with open(output_path) as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
+                rows = list(csv.DictReader(f))
             assert len(rows) == 3
