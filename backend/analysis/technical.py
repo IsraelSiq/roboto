@@ -85,8 +85,10 @@ class TechnicalAnalyzer:
             macd_df = ta.macd(df["close"])
             if macd_df is not None and not macd_df.empty:
                 cols = macd_df.columns.tolist()
-                mc = [c for c in cols if c.startswith("MACD_") and "s" not in c.lower() and "h" not in c.lower()]
-                sc = [c for c in cols if "MACDs" in c]
+                # pandas-ta-classic gera: MACD_12_26_9, MACDh_12_26_9, MACDs_12_26_9
+                # Seleciona exatamente a coluna MACD (sem 'h' e sem 's' no sufixo)
+                mc = [c for c in cols if c.upper().startswith("MACD_")]
+                sc = [c for c in cols if c.upper().startswith("MACDS_")]
                 if mc and sc:
                     macd_val  = float(macd_df[mc[0]].iloc[-1])
                     macd_sig  = float(macd_df[sc[0]].iloc[-1])
@@ -96,6 +98,8 @@ class TechnicalAnalyzer:
                         macd_cross = "UP"
                     elif macd_prev >= sig_prev and macd_val < macd_sig:
                         macd_cross = "DOWN"
+                    else:
+                        macd_cross = "NONE"
 
             bb_upper, bb_lower = None, None
             bb_df = ta.bbands(df["close"], length=self.bb_period, std=self.bb_std)
@@ -150,7 +154,7 @@ class TechnicalAnalyzer:
             if macd_cross == "UP" or macd_val > macd_sig:
                 call_score += 1
                 call_reasons.append("MACD bullish")
-            if macd_cross == "DOWN" or macd_val < macd_sig:
+            elif macd_cross == "DOWN" or macd_val < macd_sig:
                 put_score += 1
                 put_reasons.append("MACD bearish")
 
