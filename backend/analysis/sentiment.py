@@ -7,12 +7,12 @@ Arquitetura:
     - Pipeline FinBERT carregado uma única vez na inicialização (lazy loading)
     - Analisa lista de manchetes e retorna score agregado
     - Cache simples em memória para evitar reprocessamento
-    - Integração com NewsAPI via get_news_sentiment()
+    - Fonte de notícias: cryptocurrency.cv (gratuito, sem API key)
 
 Diagnóstico robusto (#5):
     - Loga o raw output do FinBERT antes de qualquer pós-processamento
     - Emite WARNING quando score == 0.50 exato (sinal de fallback estático)
-    - Emite WARNING quando NewsAPI falha (sem internet, chave inválida, etc.)
+    - Emite WARNING quando busca de notícias falha
     - Distingue fallback por erro de fallback intencional por falta de notícias
     - Campo `source` em SentimentResult indica de onde veio o resultado:
         'finbert' | 'cache' | 'fallback_no_news' | 'fallback_newsapi_error' |
@@ -35,7 +35,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from dotenv import load_dotenv
-from newsapi import NewsApiClient
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -97,7 +96,6 @@ class SentimentAnalyzer:
 
         self._pipeline = None
         self._cache: dict[str, tuple[SentimentResult, float]] = {}
-        self._newsapi = NewsApiClient(api_key=os.getenv("NEWSAPI_KEY"))
 
     # ----------------------------------------------------------
     # INICIALIZAÇÃO DO MODELO
@@ -291,79 +289,6 @@ class SentimentAnalyzer:
 
         self._set_cache(cache_key, sr)
         return sr
-
-    # ----------------------------------------------------------
-    # NEWSAPI INTEGRADO
-    # ----------------------------------------------------------
-
-    def get_news_sentiment(self, keyword: str = "bitcoin", page_size: int = 10) -> SentimentResult:
-        """
-        Busca notícias na NewsAPI e retorna sentiment.
-
-        Args:
-            keyword:   Palavra-chave de busca (ex: 'bitcoin', 'ethereum')
-            page_size: Quantidade de notícias a buscar (max: 100)
-
-        Returns:
-            SentimentResult com sentiment das notícias mais recentes
-        """
-        try:
-            resp = self._newsapi.get_everything(
-                q=keyword,
-                language="en",
-                sort_by="publishedAt",
-                page_size=page_size,
-            )
-
-            if resp.get("status") != "ok":
-                logger.warning(f"[NewsAPI] Resposta de erro: {resp}")
-                logger.warning(
-                    "[NewsAPI] Falha na NewsAPI → sentiment será neutral. "
-                    "Verifique NEWSAPI_KEY no .env e cota do plano."
-                )
-                return SentimentResult(
-                    signal="neutral",
-                    score=0.0,
-                    source="fallback_newsapi_error",
-                    reason=f"NewsAPI status={resp.get('status')} code={resp.get('code')}"
-                )
-
-            articles = resp.get("articles", [])
-            if not articles:
-                logger.warning(f"[NewsAPI] Nenhuma notícia encontrada para '{keyword}'")
-                return SentimentResult(
-                    signal="neutral",
-                    score=0.0,
-                    news_count=0,
-                    source="fallback_no_news",
-                    reason="Nenhuma notícia encontrada na NewsAPI"
-                )
-
-            news_list = [
-                {
-                    "title": a.get("title", ""),
-                    "description": a.get("description", ""),
-                    "source": a.get("source", {}).get("name", ""),
-                    "url": a.get("url", ""),
-                }
-                for a in articles if a.get("title")
-            ]
-
-            logger.info(f"[NewsAPI] {len(news_list)} notícias para '{keyword}'")
-            return self.analyze_news(news_list)
-
-        except Exception as e:
-            logger.error(f"[NewsAPI] Exceção ao buscar notícias: {e}")
-            logger.warning(
-                "[NewsAPI] Falha com exceção → sentiment será neutral. "
-                "Possíveis causas: sem internet, NEWSAPI_KEY ausente ou inválida, timeout."
-            )
-            return SentimentResult(
-                signal="neutral",
-                score=0.0,
-                source="fallback_newsapi_error",
-                reason=f"Exceção: {e}"
-            )
 
     # ----------------------------------------------------------
     # CACHE
