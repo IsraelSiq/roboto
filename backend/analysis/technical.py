@@ -4,9 +4,18 @@ Calcula RSI, EMA50, MACD e Bollinger Bands usando pandas-ta-classic.
 Gera sinal técnico: CALL | PUT | AGUARDAR
 
 Estratégia (scoring 4 indicadores, min_score=2):
-    CALL: RSI<overbought | MACD bullish | Preço>EMA50 | BB lower
-    PUT:  RSI>oversold   | MACD bearish | Preço<EMA50 | BB upper
+    CALL: RSI>rsi_call_threshold | MACD bullish | Preço>EMA50 | BB lower
+    PUT:  RSI<rsi_put_threshold  | MACD bearish | Preço<EMA50 | BB upper
     score >= min_score e maior que o oposto → CALL ou PUT
+
+Fix #4/#6:
+    Os thresholds RSI anteriores (rsi_overbought=70 para CALL e rsi_oversold=30 para PUT)
+    eram quase sempre ambos verdadeiros ao mesmo tempo (RSI entre 30 e 70 é ~95% dos candles),
+    fazendo com que o RSI nunca desempatasse CALL vs PUT. Em mercado de alta, EMA e MACD
+    favoreciam CALL, então o bot nunca emitia PUT.
+
+    Correção: usar rsi_call_threshold (padrão 55) e rsi_put_threshold (padrão 45)
+    com elif — mutuamente exclusivos, criando zona neutra entre 45 e 55.
 """
 
 import logging
@@ -41,10 +50,13 @@ class TechnicalAnalyzer:
     e maior que o score oposto.
 
     Args:
-        rsi_overbought: Nível de sobrecompra (padrão: 70)
-        rsi_oversold:   Nível de sobrevenda (padrão: 30)
-        min_score:      Pontuação mínima para gerar sinal (padrão: 2)
-        min_candles:    Mínimo de candles (padrão: 60)
+        rsi_call_threshold: RSI mínimo para favorável a CALL (padrão: 55)
+        rsi_put_threshold:  RSI máximo para favorável a PUT  (padrão: 45)
+        min_score:          Pontuação mínima para gerar sinal (padrão: 2)
+        min_candles:        Mínimo de candles (padrão: 60)
+
+    Nota: rsi_overbought e rsi_oversold foram removidos pois geravam scoring incorreto.
+          Use rsi_call_threshold e rsi_put_threshold para controlar a sensibilidade do RSI.
     """
 
     def __init__(
@@ -53,8 +65,8 @@ class TechnicalAnalyzer:
         ema_period: int = 50,
         bb_period: int = 20,
         bb_std: float = 2.0,
-        rsi_overbought: int = 70,
-        rsi_oversold: int = 30,
+        rsi_call_threshold: int = 55,
+        rsi_put_threshold: int = 45,
         min_score: int = 2,
         min_candles: int = 60,
     ):
@@ -62,8 +74,8 @@ class TechnicalAnalyzer:
         self.ema_period = ema_period
         self.bb_period = bb_period
         self.bb_std = bb_std
-        self.rsi_overbought = rsi_overbought
-        self.rsi_oversold = rsi_oversold
+        self.rsi_call_threshold = rsi_call_threshold
+        self.rsi_put_threshold = rsi_put_threshold
         self.min_score = min_score
         self.min_candles = min_candles
 
@@ -85,8 +97,6 @@ class TechnicalAnalyzer:
             macd_df = ta.macd(df["close"])
             if macd_df is not None and not macd_df.empty:
                 cols = macd_df.columns.tolist()
-                # pandas-ta-classic gera: MACD_12_26_9, MACDh_12_26_9, MACDs_12_26_9
-                # Seleciona exatamente a coluna MACD (sem 'h' e sem 's' no sufixo)
                 mc = [c for c in cols if c.upper().startswith("MACD_")]
                 sc = [c for c in cols if c.upper().startswith("MACDS_")]
                 if mc and sc:
@@ -140,14 +150,17 @@ class TechnicalAnalyzer:
         call_score, call_reasons = 0, []
         put_score,  put_reasons  = 0, []
 
-        # 1. RSI
+        # 1. RSI — mutuamente exclusivo (fix #4/#6)
+        # rsi > call_threshold (padrão 55) → momento bullish → +1 CALL
+        # rsi < put_threshold  (padrão 45) → momento bearish  → +1 PUT
+        # zona neutra 45–55 → não pontua nenhum
         if rsi is not None:
-            if rsi < self.rsi_overbought:
+            if rsi > self.rsi_call_threshold:
                 call_score += 1
-                call_reasons.append(f"RSI={rsi:.1f}<{self.rsi_overbought}")
-            if rsi > self.rsi_oversold:
+                call_reasons.append(f"RSI={rsi:.1f}>{self.rsi_call_threshold}")
+            elif rsi < self.rsi_put_threshold:
                 put_score += 1
-                put_reasons.append(f"RSI={rsi:.1f}>{self.rsi_oversold}")
+                put_reasons.append(f"RSI={rsi:.1f}<{self.rsi_put_threshold}")
 
         # 2. MACD (posição relativa ou cruzamento)
         if macd_val is not None and macd_sig is not None:
