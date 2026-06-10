@@ -1,5 +1,5 @@
 """
-Roboto — Núcleo de Sinais ⭐
+Roboto — Núcleo de Sinais ✉
 Combina sinal técnico (RSI+MACD+EMA+BB) com sentiment (FinBERT)
 e gera a decisão final de trading.
 
@@ -30,7 +30,7 @@ Uso:
     decision = combiner.combine(technical_result, sentiment_result)
     print(decision.final)           # CALL_FORTE | PUT_FORTE | CALL_FRACO | PUT_FRACO | AGUARDAR
     print(decision.sentiment_raw)   # {'positive': 0.82, 'negative': 0.10, 'neutral': 0.08}
-    print(decision.sentiment_source)# 'finbert' | 'fallback_newsapi_error' | ...
+    print(decision.sentiment_source)  # 'finbert' | 'fallback_newsapi_error' | ...
 """
 
 import logging
@@ -49,11 +49,11 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Decisões possíveis
-CALL_FORTE  = "CALL_FORTE"
-CALL_FRACO  = "CALL_FRACO"
-PUT_FORTE   = "PUT_FORTE"
-PUT_FRACO   = "PUT_FRACO"
-AGUARDAR    = "AGUARDAR"
+CALL_FORTE = "CALL_FORTE"
+CALL_FRACO = "CALL_FRACO"
+PUT_FORTE = "PUT_FORTE"
+PUT_FRACO = "PUT_FRACO"
+AGUARDAR = "AGUARDAR"
 
 
 @dataclass
@@ -119,9 +119,9 @@ class SignalDecision:
         emoji = {
             CALL_FORTE: "✅ CALL FORTE",
             CALL_FRACO: "⚠️  CALL FRACO",
-            PUT_FORTE:  "✅ PUT FORTE",
-            PUT_FRACO:  "⚠️  PUT FRACO",
-            AGUARDAR:   "⏸️  AGUARDAR",
+            PUT_FORTE: "✅ PUT FORTE",
+            PUT_FRACO: "⚠️  PUT FRACO",
+            AGUARDAR: "⏸️  AGUARDAR",
         }
         score_str = f"{self.sentiment_score:.2f}" if self.sentiment_score is not None else "N/A"
         return (
@@ -158,7 +158,7 @@ class SignalDecision:
             f"│  Sent. reason   : {self.sentiment_reason}",
             f"│  Notícias       : {self.news_count}",
             f"│  Confiança final: {self.confidence:.0%}",
-            f"└─ Decisão        : {self.final} ──────────────────────────────────────────────",
+            f"└─ Decisão        : {self.final} ────────────────────────────────────────────",
         ]
         return "\n".join(lines)
 
@@ -174,14 +174,14 @@ class SignalCombiner:
     """
 
     DECISION_TABLE = {
-        ("CALL",     "positive"): CALL_FORTE,
-        ("CALL",     "neutral"):  CALL_FRACO,
-        ("CALL",     "negative"): AGUARDAR,
-        ("PUT",      "negative"): PUT_FORTE,
-        ("PUT",      "neutral"):  PUT_FRACO,
-        ("PUT",      "positive"): AGUARDAR,
+        ("CALL", "positive"): CALL_FORTE,
+        ("CALL", "neutral"): CALL_FRACO,
+        ("CALL", "negative"): AGUARDAR,
+        ("PUT", "negative"): PUT_FORTE,
+        ("PUT", "neutral"): PUT_FRACO,
+        ("PUT", "positive"): AGUARDAR,
         ("AGUARDAR", "positive"): AGUARDAR,
-        ("AGUARDAR", "neutral"):  AGUARDAR,
+        ("AGUARDAR", "neutral"): AGUARDAR,
         ("AGUARDAR", "negative"): AGUARDAR,
     }
 
@@ -352,19 +352,23 @@ if __name__ == "__main__":
     from backend.analysis.sentiment import SentimentResult
 
     scenarios = [
-        ("CALL",     "positive", {"positive": 0.90, "negative": 0.05, "neutral": 0.05}),
-        ("CALL",     "neutral",  {"positive": 0.40, "negative": 0.20, "neutral": 0.40}),
-        ("CALL",     "negative", {"positive": 0.05, "negative": 0.90, "neutral": 0.05}),
-        ("PUT",      "negative", {"positive": 0.05, "negative": 0.90, "neutral": 0.05}),
-        ("PUT",      "neutral",  {"positive": 0.20, "negative": 0.40, "neutral": 0.40}),
-        ("PUT",      "positive", {"positive": 0.90, "negative": 0.05, "neutral": 0.05}),
+        ("CALL", "positive", {"positive": 0.90, "negative": 0.05, "neutral": 0.05}),
+        ("CALL", "neutral", {"positive": 0.40, "negative": 0.20, "neutral": 0.40}),
+        ("CALL", "negative", {"positive": 0.05, "negative": 0.90, "neutral": 0.05}),
+        ("PUT", "negative", {"positive": 0.05, "negative": 0.90, "neutral": 0.05}),
+        ("PUT", "neutral", {"positive": 0.20, "negative": 0.40, "neutral": 0.40}),
+        ("PUT", "positive", {"positive": 0.90, "negative": 0.05, "neutral": 0.05}),
         ("AGUARDAR", "positive", {}),
     ]
 
     print(f"  {'Técnico':<12} {'Sentiment':<12} {'Source':<22} {'Decisão':<15} {'Confiança'}")
     print(f"  {'-'*75}")
     for tech_s, sent_s, raw in scenarios:
-        mock_tech = TechnicalResult(signal=tech_s, reason="mock", rsi=50.0, current_price=90000.0, ema50=89000.0)
-        mock_sent = SentimentResult(signal=sent_s, score=0.85, news_count=5, reason="mock", source="finbert", raw_scores=raw)
+        mock_tech = TechnicalResult(
+            signal=tech_s, reason="mock", rsi=50.0, current_price=90000.0, ema50=89000.0
+        )
+        mock_sent = SentimentResult(
+            signal=sent_s, score=0.85, news_count=5, reason="mock", source="finbert", raw_scores=raw
+        )
         d = combiner.combine(mock_tech, mock_sent)
         print(f"  {tech_s:<12} {sent_s:<12} {mock_sent.source:<22} {d.final:<15} {d.confidence:.0%}")

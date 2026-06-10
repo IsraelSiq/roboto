@@ -53,8 +53,8 @@ def _is_suspicious_score(score: float) -> bool:
 @dataclass
 class SentimentResult:
     """Resultado da análise de sentiment."""
-    signal: str                    # positive | negative | neutral
-    score: float                   # confiança média (0.0 – 1.0)
+    signal: str                # positive | negative | neutral
+    score: float               # confiança média (0.0 – 1.0)
     news_count: int = 0
     positive_count: int = 0
     negative_count: int = 0
@@ -63,9 +63,10 @@ class SentimentResult:
     reason: str = ""
 
     # --- Campos novos para diagnóstico (#5 + #9) ---
-    source: str = "finbert"        # 'finbert' | 'cache' | 'fallback_no_news' |
-                                   # 'fallback_newsapi_error' | 'fallback_finbert_error' |
-                                   # 'fallback_empty_texts'
+    source: str = "finbert"
+    # 'finbert' | 'cache' | 'fallback_no_news' |
+    # 'fallback_newsapi_error' | 'fallback_finbert_error' |
+    # 'fallback_empty_texts'
     raw_scores: dict = field(default_factory=dict)
     # ex: {'positive': 0.82, 'negative': 0.10, 'neutral': 0.08}
     # Vazio quando o FinBERT não chegou a rodar
@@ -117,12 +118,15 @@ class SentimentAnalyzer:
                 device=-1,
                 truncation=True,
                 max_length=512,
-                top_k=None,   # <-- retorna scores para TODOS os labels (positive/negative/neutral)
+                top_k=None,
             )
             logger.info("FinBERT carregado com sucesso.")
         except Exception as e:
             logger.error(f"[FinBERT] Falha ao carregar modelo '{self.model_name}': {e}")
-            logger.error("[FinBERT] O bot vai operar com sentiment=neutral enquanto o modelo não estiver disponível.")
+            logger.error(
+                "[FinBERT] O bot vai operar com sentiment=neutral "
+                "enquanto o modelo não estiver disponível."
+            )
             raise
 
     # ----------------------------------------------------------
@@ -152,13 +156,15 @@ class SentimentAnalyzer:
         texts = []
         for n in news_list[:self.max_headlines]:
             title = n.get("title", "").strip()
-            desc  = n.get("description", "") or ""
-            text  = f"{title}. {desc}".strip(". ") if desc else title
+            desc = n.get("description", "") or ""
+            text = f"{title}. {desc}".strip(". ") if desc else title
             if text:
                 texts.append(text)
 
         if not texts:
-            logger.warning("[Sentiment] news_list recebida mas todos os textos estavam vazios → fallback neutral")
+            logger.warning(
+                "[Sentiment] news_list recebida mas todos os textos estavam vazios → fallback neutral"
+            )
             return SentimentResult(
                 signal="neutral",
                 score=0.0,
@@ -180,7 +186,8 @@ class SentimentAnalyzer:
         except Exception:
             logger.warning(
                 "[Sentiment] FinBERT indisponível → fallback neutral (score=0.0). "
-                "Verifique se os pesos do modelo estão baixados e o ambiente tem acesso à internet na primeira execução."
+                "Verifique se os pesos do modelo estão baixados e o ambiente tem "
+                "acesso à internet na primeira execução."
             )
             return SentimentResult(
                 signal="neutral",
@@ -193,12 +200,11 @@ class SentimentAnalyzer:
         # Classifica cada texto e coleta raw scores
         pos, neg, neu = 0, 0, 0
         pos_scores, neg_scores = [], []
-        all_raw: list[dict] = []  # raw output do FinBERT para cada texto
+        all_raw: list[dict] = []
 
         for text in texts:
             try:
-                raw_output = self._pipeline(text)  # top_k=None → lista de dicts
-                # Normaliza: pode ser [[{label, score}]] ou [{label, score}]
+                raw_output = self._pipeline(text)
                 if raw_output and isinstance(raw_output[0], list):
                     raw_output = raw_output[0]
 
@@ -207,7 +213,6 @@ class SentimentAnalyzer:
 
                 logger.debug(f"[FinBERT raw] {text[:60]!r} → {raw_dict}")
 
-                # Determina label vencedor
                 best = max(raw_output, key=lambda x: x["score"])
                 label = best["label"].lower()
                 score = best["score"]
@@ -234,7 +239,7 @@ class SentimentAnalyzer:
                 reason="Nenhum texto classificado com sucesso"
             )
 
-        # Score médio por label (agrega raw_scores)
+        # Score médio por label
         avg_raw = {}
         if all_raw:
             for lbl in ("positive", "negative", "neutral"):
@@ -242,8 +247,7 @@ class SentimentAnalyzer:
                 avg_raw[lbl] = round(sum(values) / len(values), 4)
 
         logger.debug(
-            f"[Sentiment] Agregado: pos={pos} neg={neg} neu={neu} | "
-            f"avg_raw={avg_raw}"
+            f"[Sentiment] Agregado: pos={pos} neg={neg} neu={neu} | avg_raw={avg_raw}"
         )
 
         # Sinal por maioria
@@ -295,7 +299,6 @@ class SentimentAnalyzer:
     def get_news_sentiment(self, keyword: str = "bitcoin", page_size: int = 10) -> SentimentResult:
         """
         Busca notícias na NewsAPI e retorna sentiment.
-        Usa endpoint 'everything' para maior cobertura no plano free.
 
         Args:
             keyword:   Palavra-chave de busca (ex: 'bitcoin', 'ethereum')
@@ -338,10 +341,10 @@ class SentimentAnalyzer:
 
             news_list = [
                 {
-                    "title":       a.get("title", ""),
+                    "title": a.get("title", ""),
                     "description": a.get("description", ""),
-                    "source":      a.get("source", {}).get("name", ""),
-                    "url":         a.get("url", ""),
+                    "source": a.get("source", {}).get("name", ""),
+                    "url": a.get("url", ""),
                 }
                 for a in articles if a.get("title")
             ]
