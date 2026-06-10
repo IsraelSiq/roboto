@@ -1,22 +1,78 @@
+# ============================================================
+# Roboto — Docker Compose
+#
+# Serviços:
+#   bot  — loop principal do robô (24/7, restart automático)
+#   api  — FastAPI REST (opcional)
+#
+# Uso rápido:
+#   cp .env.example .env   # preencha as variáveis
+#   docker compose up -d bot
+#
+# Ver logs:
+#   docker compose logs -f bot
+#
+# Parar:
+#   docker compose stop bot
+# ============================================================
 version: '3.9'
 
 services:
-  backend:
+
+  # ----------------------------------------------------------
+  # BOT — loop principal 24/7
+  # ----------------------------------------------------------
+  bot:
     build: .
-    container_name: roboto-backend
-    ports:
-      - "8000:8000"
+    image: roboto-bot
+    container_name: roboto-bot
+    restart: unless-stopped          # reinicia após crash; para manualmente com stop
     env_file:
       - .env
+    command: >
+      python -m backend.core.bot
+      --symbol   ${DEFAULT_SYMBOL:-BTCUSDT}
+      --interval ${DEFAULT_TIMEFRAME:-5m}
+      --balance  ${INITIAL_BALANCE:-10000}
+      --cycles   0
+      --sleep    0
     volumes:
-      - ./backend:/app/backend
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-    restart: unless-stopped
+      - roboto_logs:/app/logs         # persiste logs entre restarts
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"                 # mantém os 5 últimos arquivos de 10MB
+    healthcheck:
+      test: ["CMD", "python", "-c", "import backend.core.bot"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-  # Opcional: rodar o frontend junto
-  # frontend:
-  #   build: ./frontend
-  #   ports:
-  #     - "3000:3000"
-  #   depends_on:
-  #     - backend
+  # ----------------------------------------------------------
+  # API — FastAPI REST (opcional, só sobe se necessário)
+  # ----------------------------------------------------------
+  api:
+    build: .
+    image: roboto-api
+    container_name: roboto-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8000}:8000"
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - bot
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    profiles:
+      - api                           # sobe apenas com: docker compose --profile api up
+
+volumes:
+  roboto_logs:
+    driver: local

@@ -1,0 +1,51 @@
+# ============================================================
+# Roboto — systemd service (alternativa ao Docker)
+#
+# Instalação:
+#   1. sudo cp deploy/roboto.service /etc/systemd/system/
+#   2. Edite User=, WorkingDirectory= e ExecStart= abaixo
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable roboto
+#   5. sudo systemctl start roboto
+#
+# Comandos úteis:
+#   sudo systemctl status roboto
+#   sudo journalctl -u roboto -f
+#   sudo systemctl restart roboto
+#   sudo systemctl stop roboto
+# ============================================================
+
+[Unit]
+Description=Roboto — Bot de Trading Automático
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Ajuste User e WorkingDirectory para o seu servidor
+User=ubuntu
+WorkingDirectory=/home/ubuntu/roboto
+
+# Carrega variáveis do .env
+EnvironmentFile=/home/ubuntu/roboto/.env
+
+# Ativa o virtualenv e roda o bot
+ExecStart=/home/ubuntu/roboto/.venv/bin/python -m backend.core.bot --cycles 0 --sleep 0
+
+# Restart automático após qualquer falha
+Restart=always
+RestartSec=15
+
+# Aguarda até 30s para o processo encerrar antes de matar
+TimeoutStopSec=30
+
+# Redireciona stdout/stderr para o journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=roboto
+
+# Limite de restarts: máx 5 em 2 minutos (evita loop infinito em crash imediato)
+StartLimitInterval=120
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
