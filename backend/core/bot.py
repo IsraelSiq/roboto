@@ -3,6 +3,7 @@ Roboto — Bot Principal
 Loop automático que une todos os módulos:
     Binance → Técnico → Sentiment → Sinal → RiskManager → Trade → Métricas
     + Supabase para persistência de sinais, trades e sessões
+    + Telegram para alertas de startup, shutdown, circuit breaker e trades
 
 Uso:
     python -m backend.core.bot
@@ -22,6 +23,7 @@ from backend.analysis.signals import SignalCombiner
 from backend.risk.manager import RiskManager
 from backend.risk.metrics import PerformanceMetrics
 from backend.market.symbols import SYMBOL_KEYWORDS
+from backend.utils.telegram import TelegramAlert
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,7 @@ class RobotoBot:
             only_strong=only_strong,
             max_consecutive_losses=max_consecutive_losses,
         )
+        self.tg = TelegramAlert()
 
         self.db = None
         self._session_id = None
@@ -91,11 +94,24 @@ class RobotoBot:
 
         self._cycle = 0
         self._running = False
+        self._stop_reason = "encerrado"
+
+    # ----------------------------------------------------------
+    # LOOP PRINCIPAL
+    # ----------------------------------------------------------
 
     def run(self):
         self._running = True
         logger.info(f"[Bot] Iniciando Roboto | {self.symbol} {self.interval} | saldo=${self.risk.balance:,.2f}")
         self._print_header()
+
+        # Notifica Telegram: startup
+        self.tg.startup(
+            symbol=self.symbol,
+            interval=self.interval,
+            balance=self.risk.initial_balance,
+            cycles=str(self.max_cycles) if self.max_cycles else "infinito",
+        )
 
         if self.db:
             self._session_id = self.db.create_session(
@@ -107,17 +123,25 @@ class RobotoBot:
         try:
             while self._running:
                 if self.max_cycles and self._cycle >= self.max_cycles:
-                    logger.info(f"[Bot] Limite de {self.max_cycles} ciclos atingido. Encerrando.")
+                    self._stop_reason = f"limite de {self.max_cycles} ciclos atingido"
+                    logger.info(f"[Bot] {self._stop_reason.capitalize()}. Encerrando.")
                     break
 
                 self._cycle += 1
                 self._run_cycle()
 
                 if self.risk.is_paused():
+                    self._stop_reason = self.risk._pause_reason
                     logger.warning(
-                        f"[Bot] ⚠️ Bot pausado pelo RiskManager: {self.risk._pause_reason}. "
+                        f"[Bot] ⚠️ Bot pausado pelo RiskManager: {self._stop_reason}. "
                         "Aguardando intervenção manual."
                     )
+                    # Notifica Telegram: circuit breaker
+                    if "Circuit breaker" in self._stop_reason:
+                        self.tg.circuit_breaker(
+                            consecutive_losses=self.risk._consecutive_losses,
+                            balance=self.risk.balance,
+                        )
                     break
 
                 if self._running and (self.max_cycles is None or self._cycle < self.max_cycles):
@@ -125,19 +149,46 @@ class RobotoBot:
                     time.sleep(self.sleep_seconds)
 
         except KeyboardInterrupt:
+            self._stop_reason = "Ctrl+C (usuário)"
             logger.info("[Bot] Interrompido pelo usuário (Ctrl+C).")
+        except Exception as e:
+            self._stop_reason = f"erro inesperado: {e}"
+            logger.exception(f"[Bot] Erro inesperado: {e}")
+            self.tg.error("loop principal", str(e))
         finally:
             self._running = False
+
             if self.db and self._session_id:
                 self.db.close_session(
                     session_id=self._session_id,
                     balance_end=self.risk.balance,
                     cycles=self._cycle,
                 )
+
+            # Calcula win rate para o alerta de shutdown
+            win_rate = None
+            closed = self.risk.closed_trades
+            if closed:
+                wins = sum(1 for t in closed if t.result == "WIN")
+                win_rate = wins / len(closed) * 100
+
+            # Notifica Telegram: shutdown
+            self.tg.shutdown(
+                reason=self._stop_reason,
+                balance=self.risk.balance,
+                cycles=self._cycle,
+                win_rate=win_rate,
+            )
+
             self._print_metrics()
 
     def stop(self):
+        self._stop_reason = "stop() chamado externamente"
         self._running = False
+
+    # ----------------------------------------------------------
+    # CICLO
+    # ----------------------------------------------------------
 
     def _run_cycle(self):
         now = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -190,6 +241,10 @@ class RobotoBot:
         if self.db:
             self.db.save_trade(trade, signal_id=signal_id)
 
+    # ----------------------------------------------------------
+    # MONITORAMENTO DE TRADE ABERTO
+    # ----------------------------------------------------------
+
     def _monitor_open_trade(self):
         trade = self.risk._open_trade
         try:
@@ -206,6 +261,14 @@ class RobotoBot:
                 f"[Monitor] {emoji} Trade fechado por {exit_reason} | "
                 f"{trade.pnl_summary()} | Saldo: ${self.risk.balance:,.2f}"
             )
+            # Notifica Telegram: trade fechado (silencioso)
+            self.tg.trade_closed(
+                symbol=trade.symbol,
+                direction=trade.direction,
+                pnl_pct=trade.pnl_pct or 0.0,
+                result=trade.result,
+                balance=self.risk.balance,
+            )
             if self.db:
                 self.db.save_trade(trade)
         else:
@@ -213,6 +276,10 @@ class RobotoBot:
                 f"[Monitor] Trade em aberto | {trade.direction} @ ${trade.entry_price:,.2f} "
                 f"→ atual ${current_price:,.2f} | SL=${trade.stop_loss:,.2f} | TP=${trade.take_profit:,.2f}"
             )
+
+    # ----------------------------------------------------------
+    # HELPERS
+    # ----------------------------------------------------------
 
     def _fetch_candles(self):
         try:
@@ -263,6 +330,7 @@ class RobotoBot:
         print(f"  Ciclos           : {self.max_cycles or 'infinito'}")
         print(f"  Sleep            : {self.sleep_seconds}s entre ciclos")
         print(f"  Supabase         : {'✅ conectado' if self.db else '⚠️  offline'}")
+        print(f"  Telegram         : {'✅ ativo' if self.tg.enabled else '⚠️  desativado (sem token)'}")
         print("="*60 + "\n")
 
     def _print_metrics(self):
@@ -285,6 +353,9 @@ class RobotoBot:
         print("="*60 + "\n")
 
 
+# ----------------------------------------------------------
+# Entry point
+# ----------------------------------------------------------
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
