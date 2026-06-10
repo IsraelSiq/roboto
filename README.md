@@ -1,6 +1,6 @@
 # 🤖 Roboto — Bot de Trading Automatizado
 
-Bot de trading para criptomoedas com análise técnica (RSI, MACD, EMA, Bollinger Bands) + Sentiment Analysis (FinBERT) + Risk Management + Circuit Breaker + Alertas Telegram + persistência no Supabase + dashboard web + deploy 24/7 via Docker.
+Bot de trading para criptomoedas com análise técnica (RSI, MACD, EMA, Bollinger Bands) + Sentiment Analysis (FinBERT) + Risk Management + Circuit Breaker + Alertas Telegram + persistência no Supabase + dashboard web Next.js + deploy 24/7 via Docker.
 
 [![Tests](https://img.shields.io/badge/tests-103%20passing-brightgreen)](#testes)
 [![MVP](https://img.shields.io/badge/MVP-completo-brightgreen)](#roadmap)
@@ -21,9 +21,12 @@ roboto/
 │   ├── api/          # FastAPI REST
 │   ├── db/           # SupabaseClient
 │   └── utils/        # TelegramAlert
-├── frontend/
-│   └── index.html    # Dashboard dark mode (servido pela API em /dashboard)
-├── tests/            # Suite de testes pytest (103+ passing)
+├── frontend/             # Dashboard Next.js 14 + Tailwind + Recharts
+│   └── src/
+│       ├── app/          # Pages (dashboard, relatórios)
+│       ├── components/   # MetricCard, EquityCurve, TradesTable, Navbar
+│       └── services/     # api.ts (client FastAPI)
+├── tests/                # Suite de testes pytest (103+ passing)
 ├── docker-compose.yml
 ├── Dockerfile
 └── .env
@@ -58,11 +61,25 @@ python -m backend.core.bot --sleep 300 --cycles 0  # produção (infinito, 5min)
 python -m backend.core.bot --max-losses 5           # circuit breaker após 5 perdas
 ```
 
-### API + Dashboard
+### API (backend)
 ```bash
+# Da raiz do projeto:
+python -m backend.api.routes
+# ou:
 uvicorn backend.api.routes:app --reload --port 8000
 ```
-Acesse: **http://localhost:8000/dashboard**
+Acesse: **http://localhost:8000** | Docs: **http://localhost:8000/docs**
+
+### Dashboard (frontend Next.js)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Acesse: **http://localhost:3000** (dashboard) | **http://localhost:3000/reports** (relatórios)
+
+> 💡 O frontend consome a API em `http://localhost:8000` por padrão.
+> Para mudar, edite `frontend/.env.local` com `NEXT_PUBLIC_API_URL=...`
 
 ### Docker 24/7
 ```bash
@@ -71,7 +88,7 @@ docker compose up -d bot
 docker compose logs -f bot
 ```
 
-### Relatório P&L
+### Relatório P&L (CLI)
 ```bash
 python -m backend.report.pnl
 ```
@@ -114,9 +131,10 @@ MAX_CONSECUTIVE_LOSSES=3
 |--------|------|-----------|
 | GET | `/` | Health check |
 | GET | `/status` | Status do bot (saldo, drawdown, trade aberto) |
+| GET | `/signal` | Último sinal (memória) |
 | GET | `/signals` | Histórico de sinais (Supabase) |
 | GET | `/trades` | Trades da sessão atual |
-| GET | `/trades/history` | Histórico completo de trades |
+| GET | `/trades/history` | Histórico completo de trades (Supabase) |
 | GET | `/sessions` | Histórico de sessões |
 | GET | `/metrics` | Métricas de performance |
 | GET | `/candles` | Candles da Binance |
@@ -141,23 +159,11 @@ MAX_CONSECUTIVE_LOSSES=3
 
 ## Testes
 
-Suite completa com **pytest** cobrindo todos os módulos:
-
 ```bash
-# Instalar dependências de teste
 pip install pytest pytest-mock
-
-# Rodar todos os testes
 python -m pytest tests/ -v --tb=short
-
-# Ignorar testes que precisam de .env
 python -m pytest tests/ -v --ignore=tests/test_api.py
-
-# Rodar sem o smoke test (mais rápido)
-python -m pytest tests/ -v --ignore=tests/test_bot_smoke.py --ignore=tests/test_api.py
 ```
-
-### Cobertura atual
 
 | Arquivo | Módulo coberto | Casos |
 |---------|---------------|-------|
@@ -176,7 +182,83 @@ python -m pytest tests/ -v --ignore=tests/test_bot_smoke.py --ignore=tests/test_
 
 ---
 
-## 📍 Roadmap
+## 📈 Dashboard — Next.js
+
+O frontend é um app Next.js 14 com Tailwind CSS e Recharts.
+
+### Páginas
+| Rota | Conteúdo |
+|------|----------|
+| `/` | Status do bot: saldo, drawdown, trades hoje, perdas seguidas + cards de performance |
+| `/reports` | Métricas completas, equity curve, tabela de trades com badges WIN/LOSS, export CSV |
+
+### Componentes
+- `MetricCard` — card com valor colorido (verde/vermelho) por threshold
+- `EquityCurve` — gráfico de linha (Recharts) com linha de referência no saldo inicial
+- `TradesTable` — tabela ordenada por data, badges CALL/PUT e WIN/LOSS
+- `Navbar` — navegação ativa entre Dashboard e Relatórios
+
+### Stack
+- Next.js 14 (App Router, Server Components)
+- Tailwind CSS + dark mode (zinc palette)
+- Recharts 2
+- TypeScript
+- Supabase JS (pronto, não conectado ainda)
+
+---
+
+## 📍 Estado Atual — Sessão 10/06/2026
+
+### O que foi feito nesta sessão
+
+1. **Fix: `BinanceClient` lazy init** (`backend/api/routes.py`)
+   - O `_client = BinanceClient()` estava no nível do módulo e travava o startup da API antes mesmo do servidor iniciar
+   - Corrigido para `_get_client()` — só conecta quando o endpoint `/candles` ou `/price` é chamado
+   - Commit: `fix: lazy init BinanceClient para não travar o startup da API`
+
+2. **Dashboard Next.js criado do zero** (branch `feat/issue-29-reports-page`)
+   - Toda a pasta `frontend/src/` estava vazia (só `.gitkeep`)
+   - Criados todos os arquivos: layout, páginas, componentes, services, configs
+
+### Estado dos arquivos
+
+| Arquivo | Status | Observação |
+|---------|--------|------------|
+| `backend/api/routes.py` | ✅ Corrigido | Lazy init BinanceClient, merged no main |
+| `frontend/src/app/page.tsx` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/src/app/reports/page.tsx` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/src/app/layout.tsx` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/src/components/Navbar.tsx` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/src/components/MetricCard.tsx` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/src/components/EquityCurve.tsx` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/src/components/TradesTable.tsx` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/src/services/api.ts` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/src/lib/utils.ts` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/tailwind.config.ts` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+| `frontend/tsconfig.json` | ✅ Criado | Branch `feat/issue-29-reports-page` |
+
+### O que falta validar antes do merge
+
+- [ ] Confirmar que `python -m backend.api.routes` sobe sem fechar (fix do lazy init)
+- [ ] `cd frontend && npm install && npm run dev` abre sem erro de compilação
+- [ ] Página `/` carrega cards (mesmo com API offline, mostra `—`)
+- [ ] Página `/reports` carrega equity curve e tabela (mesmo vazia)
+- [ ] Testar com bot rodando: `POST /bot/start` via docs e ver dashboard atualizar
+- [ ] Verificar se `/trades/history` retorna array (hoje retorna `{trades: [...]}` — ver nota abaixo)
+
+> ⚠️ **Atenção:** O endpoint `/trades/history` retorna `{ trades: [...], total: N }` mas o `api.ts` do frontend espera um array direto. Precisa ajustar um dos dois antes do merge.
+
+### Próxima sessão — o que fazer
+
+1. **Testar o frontend** com a API no ar e corrigir o shape de `/trades/history` (ver aviso acima)
+2. **Abrir PR** `feat/issue-29-reports-page` → `main`
+3. **Endpoint `/reports/export/csv`** ainda não existe no backend — criar em `routes.py`
+4. **Considerar deploy** do frontend no Vercel (já tem `vercel.json` configurado)
+5. **Modo real** — trocar `BINANCE_TESTNET=true` para `false` e validar saldo real
+
+---
+
+## 📅 Roadmap
 
 | Fase | Módulo | Status |
 |------|--------|--------|
@@ -188,23 +270,24 @@ python -m pytest tests/ -v --ignore=tests/test_bot_smoke.py --ignore=tests/test_
 | 6 | Loop Automático (`RobotoBot`) | ✅ Concluído |
 | 7A | FastAPI REST | ✅ Concluído |
 | 7B | Supabase — persistência de trades/sinais | ✅ Concluído |
-| 7C | Dashboard web (dark mode, auto-refresh) | ✅ Concluído |
+| 7C | Dashboard web (dark mode) | ✅ Concluído |
 | 8 | Backtesting engine | ✅ Concluído |
 | 9 | Otimização de logs e diagnóstico FinBERT | ✅ Concluído |
-| 10 | **Fonte de notícias** (CryptoPanic + RSS) | ✅ Concluído (#23) |
-| 11 | **Relatório P&L standalone** | ✅ Concluído (#25) |
-| 12 | **Circuit Breaker N perdas** | ✅ Concluído (#24) |
-| 13 | **Deploy 24/7 Docker + systemd** | ✅ Concluído (#26) |
-| 14 | **Alertas Telegram** | ✅ Concluído (#27) |
-| 15 | **Testes automatizados (pytest)** | ✅ Concluído (#28) |
-| 16 | Modo real (Binance produção) | 🔜 A fazer |
-| 17 | Deploy cloud (Render / VPS) | 🔜 A fazer |
+| 10 | Fonte de notícias (CryptoPanic + RSS) | ✅ Concluído (#23) |
+| 11 | Relatório P&L standalone | ✅ Concluído (#25) |
+| 12 | Circuit Breaker N perdas | ✅ Concluído (#24) |
+| 13 | Deploy 24/7 Docker + systemd | ✅ Concluído (#26) |
+| 14 | Alertas Telegram | ✅ Concluído (#27) |
+| 15 | Testes automatizados (pytest) | ✅ Concluído (#28) |
+| 16 | **Dashboard Next.js** (equity curve, tabela, export) | 🔄 Em andamento (#29) |
+| 17 | Endpoint `/reports/export/csv` no backend | 🔜 A fazer |
+| 18 | Deploy frontend no Vercel | 🔜 A fazer |
+| 19 | Modo real (Binance produção) | 🔜 A fazer |
+| 20 | Deploy cloud bot (Render / VPS) | 🔜 A fazer |
 
 ---
 
 ## 🏁 MVP — Status (10/06/2026)
-
-Todos os módulos do MVP estão implementados, testados e no `main`:
 
 | Issue | Módulo | PR | Status |
 |-------|--------|-----|--------|
@@ -214,14 +297,4 @@ Todos os módulos do MVP estão implementados, testados e no `main`:
 | #21 | 24/7 Docker + systemd | [#26](https://github.com/IsraelSiq/roboto/pull/26) | ✅ Merged |
 | #22 | Alerta Telegram | [#27](https://github.com/IsraelSiq/roboto/pull/27) | ✅ Merged |
 | — | Suite de testes MVP | [#28](https://github.com/IsraelSiq/roboto/pull/28) | 🔄 Em revisão |
-
-### Próximos passos
-
-1. Merge do [PR #28](https://github.com/IsraelSiq/roboto/pull/28) (testes MVP)
-2. Configurar `.env` de produção com chaves reais
-3. Subir via Docker:
-   ```bash
-   docker compose up -d bot
-   ```
-4. Validar primeiro alerta no Telegram
-5. Acompanhar logs por 24h antes de habilitar modo real
+| #29 | Dashboard Next.js completo | feat/issue-29-reports-page | 🔄 Em andamento |
