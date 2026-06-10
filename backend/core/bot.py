@@ -68,11 +68,11 @@ class RobotoBot:
         self.keyword = SYMBOL_KEYWORDS.get(symbol, "bitcoin")
 
         # Componentes de trading
-        self.client    = BinanceClient()
+        self.client = BinanceClient()
         self.technical = TechnicalAnalyzer()
         self.sentiment = SentimentAnalyzer(min_confidence=0.6)
-        self.combiner  = SignalCombiner(symbol=symbol, timeframe=interval)
-        self.risk      = RiskManager(balance=balance, only_strong=only_strong)
+        self.combiner = SignalCombiner(symbol=symbol, timeframe=interval)
+        self.risk = RiskManager(balance=balance, only_strong=only_strong)
 
         # Supabase (opcional — não quebra o bot se estiver offline)
         self.db = None
@@ -168,7 +168,7 @@ class RobotoBot:
         decision = self.combiner.combine(tech, sent)
         logger.info(f"[Ciclo {self._cycle}] {decision.summary()}")
 
-        # 6. Persiste sinal no Supabase (usa decision.final — atributo correto)
+        # 6. Persiste sinal no Supabase
         signal_id = None
         if self.db:
             signal_id = self.db.save_signal({
@@ -287,6 +287,7 @@ class RobotoBot:
         print(f"  Max drawdown  : {self.risk.max_drawdown_pct}%")
         print(f"  Only strong   : {self.risk.only_strong}")
         print(f"  Ciclos        : {self.max_cycles or 'infinito'}")
+        print(f"  Sleep         : {self.sleep_seconds}s entre ciclos")
         print(f"  Supabase      : {'✅ conectado' if self.db else '⚠️  offline'}")
         print("="*58 + "\n")
 
@@ -323,8 +324,8 @@ if __name__ == "__main__":
     parser.add_argument("--symbol",   default="BTCUSDT", help="Par de moedas (padrão: BTCUSDT)")
     parser.add_argument("--interval", default="5m",      help="Timeframe (padrão: 5m)")
     parser.add_argument("--balance",  default=10000.0,   type=float, help="Saldo inicial USDT")
-    parser.add_argument("--cycles",   default=3,         type=int,   help="Nº de ciclos (0=infinito)")
-    parser.add_argument("--sleep",    default=0,         type=int,   help="Seg entre ciclos (0=usa timeframe)")
+    parser.add_argument("--cycles",   default=5,         type=int,   help="Nº de ciclos (0=infinito)")
+    parser.add_argument("--sleep",    default=30,        type=int,   help="Seg entre ciclos (0=usa timeframe)")
     parser.add_argument("--weak",     action="store_true",           help="Aceita sinais FRACOS também")
     parser.add_argument("--no-db",    action="store_true",           help="Desativa persistência no Supabase")
     args = parser.parse_args()
