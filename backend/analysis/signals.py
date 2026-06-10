@@ -34,7 +34,6 @@ Uso:
 """
 
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -43,7 +42,7 @@ from dotenv import load_dotenv
 
 from backend.analysis.technical import TechnicalResult
 from backend.analysis.sentiment import SentimentResult, _is_suspicious_score
-from backend.market.symbols import SYMBOL_KEYWORDS
+from backend.market.symbols import SYMBOL_KEYWORDS  # noqa: F401
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -134,11 +133,13 @@ class SignalDecision:
 
     def debug_breakdown(self) -> str:
         """Breakdown detalhado para log DEBUG — expõe cada componente individualmente."""
-        raw_str = (
-            f"pos={self.sentiment_raw.get('positive', '?'):.3f} "
-            f"neg={self.sentiment_raw.get('negative', '?'):.3f} "
-            f"neu={self.sentiment_raw.get('neutral', '?'):.3f}"
-        ) if self.sentiment_raw else "(não disponível)"
+        if self.sentiment_raw:
+            pos_val = self.sentiment_raw.get('positive', 0.0)
+            neg_val = self.sentiment_raw.get('negative', 0.0)
+            neu_val = self.sentiment_raw.get('neutral', 0.0)
+            raw_str = f"pos={pos_val:.3f} neg={neg_val:.3f} neu={neu_val:.3f}"
+        else:
+            raw_str = "(não disponível)"
 
         source_flag = ""
         if self.sentiment_source.startswith("fallback"):
