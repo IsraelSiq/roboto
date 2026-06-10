@@ -105,6 +105,7 @@ class RobotoBot:
         logger.info(f"[Bot] Iniciando Roboto | {self.symbol} {self.interval} | saldo=${self.risk.balance:,.2f}")
         self._print_header()
 
+        # Notifica Telegram: startup
         self.tg.startup(
             symbol=self.symbol,
             interval=self.interval,
@@ -135,6 +136,7 @@ class RobotoBot:
                         f"[Bot] ⚠️ Bot pausado pelo RiskManager: {self._stop_reason}. "
                         "Aguardando intervenção manual."
                     )
+                    # Notifica Telegram: circuit breaker
                     if "Circuit breaker" in self._stop_reason:
                         self.tg.circuit_breaker(
                             consecutive_losses=self.risk._consecutive_losses,
@@ -163,12 +165,14 @@ class RobotoBot:
                     cycles=self._cycle,
                 )
 
+            # Calcula win rate para o alerta de shutdown
             win_rate = None
             closed = self.risk.closed_trades
             if closed:
                 wins = sum(1 for t in closed if t.result == "WIN")
                 win_rate = wins / len(closed) * 100
 
+            # Notifica Telegram: shutdown
             self.tg.shutdown(
                 reason=self._stop_reason,
                 balance=self.risk.balance,
@@ -257,6 +261,7 @@ class RobotoBot:
                 f"[Monitor] {emoji} Trade fechado por {exit_reason} | "
                 f"{trade.pnl_summary()} | Saldo: ${self.risk.balance:,.2f}"
             )
+            # Notifica Telegram: trade fechado (silencioso)
             self.tg.trade_closed(
                 symbol=trade.symbol,
                 direction=trade.direction,
