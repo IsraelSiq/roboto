@@ -43,7 +43,7 @@ class BacktestReporter:
         try:
             payload = {
                 "symbol":           result.symbol,
-                "interval":         result.interval,
+                "timeframe":        result.interval,   # fix #2: era 'interval', tabela exige 'timeframe' NOT NULL
                 "start_date":       result.start_date[:10] if result.start_date else None,
                 "end_date":         result.end_date[:10] if result.end_date else None,
                 "initial_balance":  result.initial_balance,
