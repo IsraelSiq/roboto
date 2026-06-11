@@ -37,11 +37,11 @@ class TelegramAlert:
         token: Optional[str] = None,
         chat_id: Optional[str] = None,
     ):
-        self.token   = token   or os.getenv("TELEGRAM_TOKEN", "")
+        self.token = token or os.getenv("TELEGRAM_TOKEN", "")
         self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
         self.enabled = bool(self.token and self.chat_id)
         self._drawdown_alert_sent = False  # evita spam (#31)
-        self._drawdown_threshold  = float(os.getenv("DRAWDOWN_ALERT_PCT", "10.0"))
+        self._drawdown_threshold = float(os.getenv("DRAWDOWN_ALERT_PCT", "10.0"))
 
         if not self.enabled:
             logger.info("[Telegram] Não configurado. Alertas desativados.")
@@ -52,10 +52,10 @@ class TelegramAlert:
         try:
             url = _TELEGRAM_API.format(token=self.token)
             payload = {
-                "chat_id":                  self.chat_id,
-                "text":                     message,
-                "parse_mode":               "Markdown",
-                "disable_notification":     silent,
+                "chat_id": self.chat_id,
+                "text": message,
+                "parse_mode": "Markdown",
+                "disable_notification": silent,
                 "disable_web_page_preview": True,
             }
             resp = requests.post(url, json=payload, timeout=_TIMEOUT)

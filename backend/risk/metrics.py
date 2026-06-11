@@ -83,11 +83,11 @@ class PerformanceMetrics:
         min_trades:      Mínimo de trades para ser aprovado (padrão: 5)
     """
 
-    META_WIN_RATE      = 50.0
+    META_WIN_RATE = 50.0
     META_PROFIT_FACTOR = 1.1
-    META_MAX_DRAWDOWN  = 25.0
-    META_SHARPE        = 0.5
-    MIN_SCORE          = 3
+    META_MAX_DRAWDOWN = 25.0
+    META_SHARPE = 0.5
+    MIN_SCORE = 3
 
     def __init__(self, trades: list = None, risk_free_rate: float = 0.05, min_trades: int = 5):
         self.trades = [t for t in (trades or []) if not t.is_open()]
@@ -98,31 +98,31 @@ class PerformanceMetrics:
         if not self.trades:
             return MetricsResult()
 
-        pnls   = [t.pnl_pct for t in self.trades if t.pnl_pct is not None]
-        wins   = [p for p in pnls if p > 0]
+        pnls = [t.pnl_pct for t in self.trades if t.pnl_pct is not None]
+        wins = [p for p in pnls if p > 0]
         losses = [p for p in pnls if p <= 0]
 
-        total    = len(pnls)
-        n_wins   = len(wins)
+        total = len(pnls)
+        n_wins = len(wins)
         n_losses = len(losses)
 
-        win_rate      = (n_wins / total * 100) if total > 0 else 0.0
-        gross_profit  = sum(wins)        if wins   else 0.0
-        gross_loss    = abs(sum(losses)) if losses else 0.0
+        win_rate = (n_wins / total * 100) if total > 0 else 0.0
+        gross_profit = sum(wins) if wins else 0.0
+        gross_loss = abs(sum(losses)) if losses else 0.0
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.0 if wins else 0.0)
-        avg_win       = (sum(wins)   / n_wins)   if wins   else 0.0
-        avg_loss      = (sum(losses) / n_losses) if losses else 0.0
-        total_pnl     = sum(pnls)
-        max_dd        = self._calc_max_drawdown(pnls)
-        sharpe        = self._calc_sharpe(pnls)
+        avg_win = (sum(wins) / n_wins) if wins else 0.0
+        avg_loss = (sum(losses) / n_losses) if losses else 0.0
+        total_pnl = sum(pnls)
+        max_dd = self._calc_max_drawdown(pnls)
+        sharpe = self._calc_sharpe(pnls)
 
         criteria = {
-            "win_rate":      win_rate >= self.META_WIN_RATE,
+            "win_rate": win_rate >= self.META_WIN_RATE,
             "profit_factor": profit_factor >= self.META_PROFIT_FACTOR,
-            "drawdown":      max_dd < self.META_MAX_DRAWDOWN,
-            "sharpe":        sharpe >= self.META_SHARPE,
+            "drawdown": max_dd < self.META_MAX_DRAWDOWN,
+            "sharpe": sharpe >= self.META_SHARPE,
         }
-        score    = sum(criteria.values())
+        score = sum(criteria.values())
         approved = (score >= self.MIN_SCORE) and (total >= self.min_trades)
 
         return MetricsResult(
@@ -146,7 +146,7 @@ class PerformanceMetrics:
         if not pnls:
             return 0.0
         equity = 100.0
-        peak   = equity
+        peak = equity
         max_dd = 0.0
         for pnl in pnls:
             equity *= (1 + pnl / 100)
@@ -160,10 +160,10 @@ class PerformanceMetrics:
     def _calc_sharpe(self, pnls: list) -> float:
         if len(pnls) < 2:
             return 0.0
-        n        = len(pnls)
-        mean     = sum(pnls) / n
+        n = len(pnls)
+        mean = sum(pnls) / n
         variance = sum((p - mean) ** 2 for p in pnls) / (n - 1)
-        std      = math.sqrt(variance)
+        std = math.sqrt(variance)
         if std == 0:
             return 0.0
         rf_per_trade = self.risk_free_rate / 288
