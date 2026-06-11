@@ -136,6 +136,9 @@
     }
     .token-row button:hover { background: #2a2d3a; }
 
+    /* token-missing highlight */
+    .token-missing { border-color: #f44336 !important; box-shadow: 0 0 0 2px #f4433622; }
+
     .log {
       background: #0a0c14;
       border: 1px solid #1e2130;
@@ -288,11 +291,11 @@
 
   function loadLocal() {
     const cfg = JSON.parse(localStorage.getItem('roboto_cfg') || '{}');
-    if (cfg.symbol)      document.getElementById('cfg-symbol').value      = cfg.symbol;
-    if (cfg.interval)    document.getElementById('cfg-interval').value    = cfg.interval;
-    if (cfg.balance)     document.getElementById('cfg-balance').value     = cfg.balance;
-    if (cfg.cycles != null) document.getElementById('cfg-cycles').value  = cfg.cycles;
-    if (cfg.sleep)       document.getElementById('cfg-sleep').value       = cfg.sleep;
+    if (cfg.symbol)         document.getElementById('cfg-symbol').value      = cfg.symbol;
+    if (cfg.interval)       document.getElementById('cfg-interval').value    = cfg.interval;
+    if (cfg.balance)        document.getElementById('cfg-balance').value     = cfg.balance;
+    if (cfg.cycles != null) document.getElementById('cfg-cycles').value      = cfg.cycles;
+    if (cfg.sleep)          document.getElementById('cfg-sleep').value       = cfg.sleep;
     if (cfg.only_strong != null)
       document.getElementById('cfg-only-strong').checked = cfg.only_strong;
     const token = localStorage.getItem('roboto_token') || '';
@@ -313,11 +316,25 @@
   function saveToken() {
     const t = document.getElementById('api-token').value.trim();
     localStorage.setItem('roboto_token', t);
+    document.getElementById('api-token').classList.remove('token-missing');
     showToast('💾 Token salvo', 'ok');
     log('info', 'Token atualizado e salvo localmente');
   }
 
   function getToken() { return localStorage.getItem('roboto_token') || ''; }
+
+  function requireToken() {
+    const t = getToken();
+    if (!t) {
+      showToast('⚠️ Preencha o API Token acima e clique em 💾 Salvar', 'err');
+      log('err', 'Token não configurado — preencha o campo API Token e salve');
+      const el = document.getElementById('api-token');
+      el.classList.add('token-missing');
+      el.focus();
+      return false;
+    }
+    return true;
+  }
 
   function log(type, msg) {
     const el = document.getElementById('log');
@@ -363,7 +380,7 @@
       const bal = document.getElementById('s-balance');
       bal.textContent = st.balance != null
         ? `$${Number(st.balance).toLocaleString('pt-BR', {minimumFractionDigits:2})}` : '—';
-      const dd = document.getElementById('s-drawdown');
+      const dd  = document.getElementById('s-drawdown');
       const ddv = st.drawdown_pct;
       dd.textContent = ddv != null ? `${Number(ddv).toFixed(2)}%` : '—';
       dd.className = 'val ' + (ddv > 10 ? 'red' : ddv > 5 ? 'yellow' : 'green');
@@ -391,34 +408,28 @@
 
   async function botAction(method, endpoint, body = null) {
     const token = getToken();
-    if (!token) {
-      showToast('⚠️ Informe o API Token acima', 'err');
-      log('err', 'Token não configurado. Preencha o campo API Token.');
-      return;
-    }
-    try {
-      const opts = {
-        method,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      };
-      if (body) opts.body = JSON.stringify(body);
-      const res  = await fetch(`${API}${endpoint}`, opts);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || res.statusText);
-      return data;
-    } catch(e) { throw e; }
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res  = await fetch(`${API}${endpoint}`, opts);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    return data;
   }
 
   async function startBot() {
+    if (!requireToken()) return;
     saveLocal();
     const cfg = JSON.parse(localStorage.getItem('roboto_cfg') || '{}');
     const body = {
-      symbol:       cfg.symbol      || 'BTCUSDT',
-      interval:     cfg.interval    || '5m',
-      balance:      cfg.balance     || 10000,
-      only_strong:  cfg.only_strong !== false,
-      max_cycles:   cfg.cycles > 0  ? cfg.cycles : null,
-      sleep_seconds: cfg.sleep      || 300,
+      symbol:        cfg.symbol      || 'BTCUSDT',
+      interval:      cfg.interval    || '5m',
+      balance:       cfg.balance     || 10000,
+      only_strong:   cfg.only_strong !== false,
+      max_cycles:    cfg.cycles > 0  ? cfg.cycles : null,
+      sleep_seconds: cfg.sleep       || 300,
     };
     log('info', `Iniciando bot... ${body.symbol} ${body.interval} $${body.balance}`);
     try {
@@ -433,6 +444,7 @@
   }
 
   async function stopBot() {
+    if (!requireToken()) return;
     if (!confirm('Parar o bot agora?')) return;
     log('warn', 'Parando bot...');
     try {
@@ -447,6 +459,7 @@
   }
 
   async function resumeBot() {
+    if (!requireToken()) return;
     log('info', 'Retomando bot...');
     try {
       const data = await botAction('POST', '/bot/resume');
@@ -475,6 +488,9 @@
       const el = document.getElementById(id);
       if (el) el.addEventListener('change', saveLocal);
     });
+  document.getElementById('api-token').addEventListener('input', () => {
+    document.getElementById('api-token').classList.remove('token-missing');
+  });
 </script>
 </body>
 </html>
