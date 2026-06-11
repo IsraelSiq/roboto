@@ -70,14 +70,19 @@ jobs:
 
     steps:
       - name: Trigger Render deploy hook
-        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}")
+          HOOK="$RENDER_DEPLOY_HOOK"
+          if [ -z "$HOOK" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK n\u00e3o configurado — pulando deploy"
+            exit 0
+          fi
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOOK")
           echo "Render webhook status: $STATUS"
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
             echo "::warning::Render webhook retornou $STATUS"
           fi
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
 
       - name: Smoke test contra produção
         run: |
