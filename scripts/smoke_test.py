@@ -2,8 +2,8 @@
 """
 Roboto — Smoke Test com Sandbox Binance Testnet
 
-Roda uma série de verificações end-to-end usando dados reais do testnet.
-Não requer Supabase nem FinBERT — ideal para CI e validação de ambiente.
+Verificações end-to-end usando dados reais do testnet.
+Não requer Supabase nem FinBERT na memória — ideal para CI e validação de ambiente.
 
 Uso:
     python scripts/smoke_test.py
@@ -22,17 +22,13 @@ import sys
 import time
 from pathlib import Path
 
-# Garante que o root do projeto está no path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(levelname)s %(name)s: %(message)s",
-)
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
 GREEN  = "\033[92m"
 RED    = "\033[91m"
@@ -60,6 +56,7 @@ def section(title: str):
 
 section("🧪 Binance Testnet")
 
+bc = None
 try:
     from backend.market.binance_client import BinanceClient
     bc = BinanceClient()
@@ -67,7 +64,6 @@ try:
     step("Inicialização do cliente", True, mode)
 except Exception as e:
     step("Inicialização do cliente", False, str(e))
-    bc = None
 
 if bc:
     try:
@@ -84,19 +80,21 @@ if bc:
         step("Preço BTC", False, str(e))
 
     try:
-        df = bc.get_candles("BTCUSDT", "5m", limit=20)
-        ok = not df.empty and len(df) >= 10
-        step("Candles 5m BTCUSDT", ok, f"{len(df)} candles recebidos")
+        # 100 candles para satisfazer min_candles=60 do TechnicalAnalyzer
+        df_candles = bc.get_candles("BTCUSDT", "5m", limit=100)
+        ok = not df_candles.empty and len(df_candles) >= 20
+        step("Candles 5m BTCUSDT", ok, f"{len(df_candles)} candles recebidos")
     except Exception as e:
         step("Candles 5m BTCUSDT", False, str(e))
+        df_candles = None
 
     try:
         balance = bc.get_account_balance("USDT")
         ok = balance is not None
-        detail = f"${balance:,.2f} USDT" if ok else "falhou"
-        step("Saldo USDT testnet", ok, detail)
+        step("Saldo USDT testnet", ok, f"${balance:,.2f} USDT" if ok else "falhou")
     except Exception as e:
         step("Saldo USDT testnet", False, str(e))
+
 
 # ----------------------------------------------------------
 # 2. Análise Técnica
@@ -106,73 +104,81 @@ section("📊 Análise Técnica")
 
 try:
     from backend.analysis.technical import TechnicalAnalyzer
-    bc2 = BinanceClient() if bc else None
-    if bc2:
-        df = bc2.get_candles("BTCUSDT", "5m", limit=50)
-        ta = TechnicalAnalyzer(df)
-        sig = ta.analyze()
+    # TechnicalAnalyzer() sem args; analyze(df) recebe o DataFrame
+    ta = TechnicalAnalyzer()
+    if bc and df_candles is not None and not df_candles.empty:
+        sig = ta.analyze(df_candles)
         ok = sig is not None
-        step("TechnicalAnalyzer.analyze()", ok, f"sinal={getattr(sig, 'signal', sig)}" if ok else "retornou None")
+        step("TechnicalAnalyzer.analyze(df)", ok,
+             f"sinal={sig.signal} | {sig.reason[:60]}" if ok else "retornou None")
+    else:
+        step("TechnicalAnalyzer.analyze(df)", False, "candles indisponíveis")
 except Exception as e:
-    step("TechnicalAnalyzer.analyze()", False, str(e))
+    step("TechnicalAnalyzer.analyze(df)", False, str(e))
+
 
 # ----------------------------------------------------------
 # 3. Sentiment (mock — sem carregar FinBERT)
 # ----------------------------------------------------------
 
-section("🗣️ Sentiment (modo mock)")
+section("🗣️ Sentiment (mock — analyze_news com lista fake)")
 
 try:
-    # Substitui o transformers por um mock para não baixar o modelo
+    from backend.analysis.sentiment import SentimentAnalyzer
     import unittest.mock as mock
-    with mock.patch.dict(os.environ, {"FINBERT_MOCK": "true"}):
-        from backend.analysis.sentiment import SentimentAnalyzer
-        sa = SentimentAnalyzer()
-        result = sa.analyze_texts(["Bitcoin is rising strongly today"])
-        ok = isinstance(result, (str, dict, list, type(None)))
-        step("SentimentAnalyzer (mock)", ok, str(result)[:60] if ok else "falhou")
+
+    # Mock do pipeline FinBERT para não baixar o modelo no smoke test
+    fake_pipeline_output = [[{"label": "positive", "score": 0.85},
+                              {"label": "negative", "score": 0.10},
+                              {"label": "neutral",  "score": 0.05}]]
+
+    sa = SentimentAnalyzer()
+    with mock.patch("backend.analysis.sentiment._FINBERT_PIPELINE", fake_pipeline_output[0]):
+        # Simula pipeline carregado retornando lista de scores
+        import backend.analysis.sentiment as _sa_mod
+        _sa_mod._FINBERT_PIPELINE = lambda text: fake_pipeline_output[0]
+
+        fake_news = [
+            {"title": "Bitcoin surges to new highs", "description": "BTC up 5%"},
+            {"title": "Crypto market bullish",       "description": "ETH also rises"},
+        ]
+        result = sa.analyze_news(fake_news)
+        ok = result is not None and result.signal in ("positive", "negative", "neutral")
+        step("SentimentAnalyzer.analyze_news()", ok,
+             f"signal={result.signal} score={result.score} source={result.source}" if ok else str(result))
 except Exception as e:
-    step("SentimentAnalyzer (mock)", False, str(e))
+    step("SentimentAnalyzer.analyze_news()", False, str(e))
+
 
 # ----------------------------------------------------------
 # 4. Bot — 1 ciclo sem DB
 # ----------------------------------------------------------
 
-section("🤖 Bot — 1 ciclo (max_cycles=1, use_db=False)")
+section("🤖 Bot — 1 ciclo (max_cycles=1)")
 
 try:
     from backend.core.bot import RobotoBot
-    bot = RobotoBot(
-        symbol="BTCUSDT",
-        interval="5m",
-        balance=10_000.0,
-        only_strong=False,
-        max_cycles=1,
-        sleep_seconds=0,
-        use_db=False,
+    kwargs = dict(
+        symbol="BTCUSDT", interval="5m",
+        balance=10_000.0, only_strong=False,
+        max_cycles=1, sleep_seconds=0,
     )
+    try:
+        bot = RobotoBot(**kwargs, use_db=False)
+    except TypeError:
+        bot = RobotoBot(**kwargs)  # use_db não existe ainda
+
     start = time.time()
     bot.run()
     elapsed = round(time.time() - start, 2)
     trades  = len(bot.risk.closed_trades)
     step("Bot.run() 1 ciclo", True, f"elapsed={elapsed}s, trades_fechados={trades}")
-except TypeError:
-    # use_db pode não existir ainda — tenta sem ele
-    try:
-        bot = RobotoBot(
-            symbol="BTCUSDT", interval="5m",
-            balance=10_000.0, only_strong=False,
-            max_cycles=1, sleep_seconds=0,
-        )
-        bot.run()
-        step("Bot.run() 1 ciclo", True, "(use_db param n/a)")
-    except Exception as e2:
-        step("Bot.run() 1 ciclo", False, str(e2)[:80])
 except Exception as e:
-    step("Bot.run() 1 ciclo", False, str(e)[:80])
+    step("Bot.run() 1 ciclo", False, str(e)[:100])
+
 
 # ----------------------------------------------------------
-# 5. API /health (opcional — só se --api-url fornecida)
+# 5. API /health (opcional)
 # ----------------------------------------------------------
 
 parser = argparse.ArgumentParser(add_help=False)
@@ -189,6 +195,7 @@ if args.api_url:
             step("GET /health", ok, body[:60])
     except Exception as e:
         step("GET /health", False, str(e))
+
 
 # ----------------------------------------------------------
 # Resumo final
