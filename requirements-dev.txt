@@ -1,0 +1,3 @@
+# Roboto — dependências de desenvolvimento e testes
+pytest==8.2.2
+pytest-mock==3.14.0
