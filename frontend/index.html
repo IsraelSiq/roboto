@@ -36,9 +36,7 @@
       font-size: 0.78rem; color: #888;
       flex-wrap: wrap;
     }
-    .health-bar .dep {
-      display: flex; align-items: center; gap: 5px;
-    }
+    .health-bar .dep { display: flex; align-items: center; gap: 5px; }
     .dot {
       width: 8px; height: 8px; border-radius: 50%;
       display: inline-block; flex-shrink: 0;
@@ -116,6 +114,7 @@
   <span id="status-badge" class="badge offline">Carregando...</span>
   <a href="/" class="nav-link active">Dashboard</a>
   <a href="/reports" class="nav-link">📊 Relatórios</a>
+  <a href="/control" class="nav-link">⚙️ Controle</a>
 </header>
 
 <!-- Health Bar (#31) -->
@@ -173,9 +172,7 @@
 <div id="toast"></div>
 
 <script>
-  // URL da API: usa variavel global, env do Vite, ou fallback para producao
   const API = (window.API_URL || 'https://roboto-tau3.onrender.com').replace(/\/$/, '');
-
   let timer = 30;
   let apiOffline = false;
 
@@ -188,7 +185,6 @@
     return new Date(s).toLocaleTimeString('pt-BR');
   }
 
-  // ---- Toast (#31) ----
   let _toastTimer = null;
   function showToast(msg) {
     const el = document.getElementById('toast');
@@ -198,10 +194,8 @@
     _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
   }
 
-  // ---- Health Bar (#31) ----
   function setDot(id, state, latency) {
     const dot = document.getElementById('dot-' + id);
-    const lbl = document.getElementById('lbl-' + id);
     const lat = document.getElementById('lat-' + id);
     dot.className = 'dot ' + (state === true ? 'ok' : state === false ? 'error' : 'loading');
     if (lat && latency != null) lat.textContent = latency + 'ms';
@@ -211,136 +205,91 @@
     try {
       const h = await fetch(`${API}/metrics/health`).then(r => r.json());
       const deps = h.dependencies || {};
-
-      setDot('binance',  deps.binance?.ok,
-             deps.binance?.latency_ms);
-      setDot('supabase', deps.supabase?.ok,
-             deps.supabase?.latency_ms);
-
-      // FinBERT: ok=true mas loaded=false => amarelo (loading)
-      const fbOk = deps.finbert?.ok;
+      setDot('binance',  deps.binance?.ok,  deps.binance?.latency_ms);
+      setDot('supabase', deps.supabase?.ok, deps.supabase?.latency_ms);
       const fbLoaded = deps.finbert?.loaded;
-      const dotFb = document.getElementById('dot-finbert');
-      dotFb.className = 'dot ' + (fbLoaded ? 'ok' : fbOk === false ? 'error' : 'loading');
+      const fbOk     = deps.finbert?.ok;
+      document.getElementById('dot-finbert').className =
+        'dot ' + (fbLoaded ? 'ok' : fbOk === false ? 'error' : 'loading');
       document.getElementById('lbl-finbert').textContent =
         'FinBERT' + (fbLoaded ? '' : ' (não carregado)');
-
       if (h.uptime_s != null) {
         const u = h.uptime_s;
         const up = u < 60 ? `${u}s` : u < 3600 ? `${Math.floor(u/60)}m` : `${Math.floor(u/3600)}h`;
         document.getElementById('uptime').textContent = `uptime ${up} • v${h.version}`;
       }
-
-      // Reset toast se API voltou
-      if (apiOffline) { apiOffline = false; }
     } catch(e) {
-      setDot('binance', false);
-      setDot('supabase', false);
-      setDot('finbert', false);
+      setDot('binance', false); setDot('supabase', false); setDot('finbert', false);
     }
   }
 
-  // ---- Status ----
   async function loadStatus() {
     try {
       const [st, pr] = await Promise.all([
         fetch(`${API}/status`).then(r => r.json()),
         fetch(`${API}/price`).then(r => r.json()),
       ]);
-
-      if (apiOffline) { apiOffline = false; }
-
+      if (apiOffline) apiOffline = false;
       const badge = document.getElementById('status-badge');
-      if (st.running)      { badge.textContent = '🟢 Rodando'; badge.className = 'badge running'; }
-      else if (st.paused)  { badge.textContent = '⏸ Pausado'; badge.className = 'badge offline'; }
-      else                 { badge.textContent = '⚫ Parado';  badge.className = 'badge stopped'; }
-
+      if (st.running)     { badge.textContent = '🟢 Rodando'; badge.className = 'badge running'; }
+      else if (st.paused) { badge.textContent = '⏸ Pausado'; badge.className = 'badge offline'; }
+      else                { badge.textContent = '⚫ Parado';  badge.className = 'badge stopped'; }
       document.getElementById('c-balance').textContent =
-        st.balance != null
-          ? `$${Number(st.balance).toLocaleString('pt-BR', {minimumFractionDigits:2})}`
-          : '—';
-
-      const dd  = document.getElementById('c-drawdown');
+        st.balance != null ? `$${Number(st.balance).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : '—';
+      const dd = document.getElementById('c-drawdown');
       const ddv = st.drawdown_pct;
       dd.textContent = ddv != null ? `${fmt(ddv)}%` : '—';
-      dd.className   = 'value ' + (ddv > 10 ? 'red' : ddv > 5 ? 'yellow' : 'green');
-
+      dd.className = 'value ' + (ddv > 10 ? 'red' : ddv > 5 ? 'yellow' : 'green');
       document.getElementById('c-trades-today').textContent = st.trades_today ?? '—';
       document.getElementById('c-trades-total').textContent = st.total_trades  ?? '—';
       document.getElementById('c-price').textContent =
-        pr.price != null
-          ? `$${Number(pr.price).toLocaleString('pt-BR', {minimumFractionDigits:2})}`
-          : '—';
+        pr.price != null ? `$${Number(pr.price).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : '—';
     } catch(e) {
       document.getElementById('status-badge').textContent = '⚠ Offline';
       document.getElementById('status-badge').className   = 'badge offline';
-      if (!apiOffline) {
-        apiOffline = true;
-        showToast('⚠️ API offline — tentando reconectar...');
-      }
+      if (!apiOffline) { apiOffline = true; showToast('⚠️ API offline — tentando reconectar...'); }
     }
   }
 
-  // ---- Signals ----
   async function loadSignals() {
     try {
       const { signals } = await fetch(`${API}/signals?limit=10`).then(r => r.json());
       const tbody = document.getElementById('signals-body');
-      if (!signals || !signals.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="color:#555;padding:20px">Sem sinais ainda</td></tr>';
-        return;
-      }
+      if (!signals?.length) { tbody.innerHTML = '<tr><td colspan="7" style="color:#555;padding:20px">Sem sinais ainda</td></tr>'; return; }
       tbody.innerHTML = signals.map(s => `
         <tr>
-          <td>${fmtDate(s.created_at)}</td>
-          <td>$${fmt(s.current_price)}</td>
-          <td>${fmt(s.rsi)}</td>
-          <td><span class="tag ${s.technical_signal}">${s.technical_signal ?? '—'}</span></td>
-          <td><span class="tag ${s.sentiment_signal}">${s.sentiment_signal ?? '—'}</span></td>
-          <td>${fmt(s.sentiment_score, 3)}</td>
+          <td>${fmtDate(s.created_at)}</td><td>$${fmt(s.current_price)}</td><td>${fmt(s.rsi)}</td>
+          <td><span class="tag ${s.technical_signal}">${s.technical_signal??'—'}</span></td>
+          <td><span class="tag ${s.sentiment_signal}">${s.sentiment_signal??'—'}</span></td>
+          <td>${fmt(s.sentiment_score,3)}</td>
           <td><span class="tag ${s.final_decision}">${s.final_decision}</span></td>
         </tr>`).join('');
     } catch(e) { console.error('signals:', e); }
   }
 
-  // ---- Trades ----
   async function loadTrades() {
     try {
       const { trades } = await fetch(`${API}/trades/history?limit=20`).then(r => r.json());
       const tbody = document.getElementById('trades-body');
-      if (!trades || !trades.length) {
-        tbody.innerHTML = '<tr><td colspan="6" style="color:#555;padding:20px">Sem trades ainda</td></tr>';
-        return;
-      }
+      if (!trades?.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:#555;padding:20px">Sem trades ainda</td></tr>'; return; }
       tbody.innerHTML = trades.map(t => `
         <tr>
           <td><span class="tag ${t.direction}_${t.strength}">${t.direction} ${t.strength}</span></td>
           <td>$${fmt(t.entry_price)}</td>
-          <td>${t.exit_price ? '$'+fmt(t.exit_price) : '—'}</td>
-          <td class="${t.pnl_pct > 0 ? 'green' : t.pnl_pct < 0 ? 'red' : ''}">${t.pnl_pct != null ? fmt(t.pnl_pct)+'%' : '—'}</td>
-          <td><span class="tag ${t.result}">${t.result ?? 'OPEN'}</span></td>
+          <td>${t.exit_price?'$'+fmt(t.exit_price):'—'}</td>
+          <td class="${t.pnl_pct>0?'green':t.pnl_pct<0?'red':''}">" +
+            "${t.pnl_pct!=null?fmt(t.pnl_pct)+'%':'—'}</td>
+          <td><span class="tag ${t.result}">${t.result??'OPEN'}</span></td>
           <td>${fmtDate(t.closed_at)}</td>
         </tr>`).join('');
     } catch(e) { console.error('trades:', e); }
   }
 
-  // ---- Loop principal ----
-  function refresh() {
-    loadStatus();
-    loadSignals();
-    loadTrades();
-    timer = 30;
-  }
-
-  // Health em ciclo mais lento (60s)
-  loadHealth();
-  setInterval(loadHealth, 60_000);
-
-  refresh();
-  setInterval(refresh, 30_000);
+  function refresh() { loadStatus(); loadSignals(); loadTrades(); timer = 30; }
+  loadHealth(); setInterval(loadHealth, 60_000);
+  refresh();   setInterval(refresh,    30_000);
   setInterval(() => {
-    timer--;
-    document.getElementById('countdown').textContent = timer;
+    timer--; document.getElementById('countdown').textContent = timer;
   }, 1000);
 </script>
 </body>

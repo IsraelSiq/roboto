@@ -8,41 +8,23 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; }
-
     header {
-      background: #1a1d27;
-      padding: 16px 32px;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      border-bottom: 1px solid #2a2d3a;
-      flex-wrap: wrap;
+      background: #1a1d27; padding: 16px 32px;
+      display: flex; align-items: center; gap: 16px;
+      border-bottom: 1px solid #2a2d3a; flex-wrap: wrap;
     }
     header h1 { font-size: 1.3rem; color: #fff; flex: 1; }
     .nav-link {
-      color: #888;
-      text-decoration: none;
-      font-size: 0.85rem;
-      padding: 5px 12px;
-      border-radius: 6px;
-      border: 1px solid #2a2d3a;
-      transition: all 0.15s;
+      color: #888; text-decoration: none; font-size: 0.85rem;
+      padding: 5px 12px; border-radius: 6px; border: 1px solid #2a2d3a; transition: all 0.15s;
     }
-    .nav-link:hover { color: #fff; border-color: #4a4d5a; background: #1e2130; }
+    .nav-link:hover  { color: #fff; border-color: #4a4d5a; background: #1e2130; }
     .nav-link.active { color: #fff; border-color: #7c3aed; background: #1a1230; }
-
     .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 16px;
-      padding: 24px 32px 0;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px; padding: 24px 32px 0;
     }
-    .card {
-      background: #1a1d27;
-      border-radius: 10px;
-      padding: 18px 20px;
-      border: 1px solid #2a2d3a;
-    }
+    .card { background: #1a1d27; border-radius: 10px; padding: 18px 20px; border: 1px solid #2a2d3a; }
     .card .label { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
     .card .value { font-size: 1.6rem; font-weight: 700; margin-top: 6px; color: #fff; }
     .card .value.green  { color: #4caf50; }
@@ -50,133 +32,66 @@
     .card .value.yellow { color: #ff9800; }
     .card .value.purple { color: #a78bfa; }
     .card .sub { font-size: 0.75rem; color: #666; margin-top: 4px; }
-
     section {
-      margin: 24px 32px;
-      background: #1a1d27;
-      border-radius: 10px;
-      border: 1px solid #2a2d3a;
-      overflow: hidden;
+      margin: 24px 32px; background: #1a1d27;
+      border-radius: 10px; border: 1px solid #2a2d3a; overflow: hidden;
     }
     .section-header {
-      padding: 14px 20px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid #2a2d3a;
-      flex-wrap: wrap;
-      gap: 10px;
+      padding: 14px 20px; display: flex; align-items: center;
+      justify-content: space-between; border-bottom: 1px solid #2a2d3a;
+      flex-wrap: wrap; gap: 10px;
     }
-    .section-header h2 {
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #aaa;
-    }
-    .filters {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
+    .section-header h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.08em; color: #aaa; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .filters select, .filters input {
-      background: #0f1117;
-      color: #ccc;
-      border: 1px solid #2a2d3a;
-      border-radius: 6px;
-      padding: 5px 10px;
-      font-size: 0.8rem;
-      outline: none;
+      background: #0f1117; color: #ccc; border: 1px solid #2a2d3a;
+      border-radius: 6px; padding: 5px 10px; font-size: 0.8rem; outline: none;
     }
     .filters select:focus, .filters input:focus { border-color: #7c3aed; }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 14px;
-      border-radius: 6px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      border: none;
-      transition: opacity 0.15s;
-    }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px;
+      border-radius: 6px; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; border: none; transition: opacity 0.15s; }
     .btn:hover { opacity: 0.85; }
-    .btn-purple { background: #7c3aed; color: #fff; }
-    .btn-green  { background: #166534; color: #4ade80; border: 1px solid #15803d; }
-
+    .btn-green { background: #166534; color: #4ade80; border: 1px solid #15803d; }
     table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-    th {
-      padding: 10px 16px;
-      text-align: left;
-      color: #666;
-      font-weight: 500;
-      border-bottom: 1px solid #2a2d3a;
-    }
+    th { padding: 10px 16px; text-align: left; color: #666; font-weight: 500; border-bottom: 1px solid #2a2d3a; }
     td { padding: 10px 16px; border-bottom: 1px solid #1e2130; }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #1e2235; }
-
-    .tag {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: 600;
-    }
-    .tag.WIN, .tag.CALL_FORTE  { background:#1a3a1a; color:#4caf50; }
-    .tag.LOSS, .tag.PUT_FORTE  { background:#3a1a1a; color:#f44336; }
-    .tag.PENDING               { background:#2a2a1a; color:#ff9800; }
-    .tag.CALL_FRACO            { background:#1a2a1a; color:#81c784; }
-    .tag.PUT_FRACO             { background:#2a1a1a; color:#e57373; }
-
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .tag.WIN, .tag.CALL_FORTE { background:#1a3a1a; color:#4caf50; }
+    .tag.LOSS,.tag.PUT_FORTE  { background:#3a1a1a; color:#f44336; }
+    .tag.PENDING              { background:#2a2a1a; color:#ff9800; }
+    .tag.CALL_FRACO           { background:#1a2a1a; color:#81c784; }
+    .tag.PUT_FRACO            { background:#2a1a1a; color:#e57373; }
     .pagination {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 14px;
-      border-top: 1px solid #2a2d3a;
-      font-size: 0.8rem;
-      color: #888;
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 14px; border-top: 1px solid #2a2d3a;
+      font-size: 0.8rem; color: #888;
     }
     .pagination button {
-      background: #1e2130;
-      color: #ccc;
-      border: 1px solid #2a2d3a;
-      border-radius: 4px;
-      padding: 4px 10px;
-      cursor: pointer;
-      font-size: 0.8rem;
+      background: #1e2130; color: #ccc; border: 1px solid #2a2d3a;
+      border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 0.8rem;
     }
     .pagination button:disabled { opacity: 0.3; cursor: default; }
     .pagination button:hover:not(:disabled) { background: #2a2d3a; }
-
-    #equity-chart {
-      width: 100%;
-      height: 320px;
-    }
-
+    #equity-chart { width: 100%; height: 320px; }
     .empty-row { color: #555; padding: 24px; text-align: center; }
-
     @media (max-width: 600px) {
-      .grid { padding: 16px; }
-      section { margin: 16px; }
-      header { padding: 12px 16px; }
-      table { font-size: 0.78rem; }
+      .grid { padding: 16px; } section { margin: 16px; }
+      header { padding: 12px 16px; } table { font-size: 0.78rem; }
     }
   </style>
 </head>
 <body>
-
 <header>
   <span style="font-size:1.5rem">📊</span>
   <h1>Roboto — Relatórios</h1>
-  <a href="/dashboard/" class="nav-link">Dashboard</a>
-  <a href="/dashboard/reports.html" class="nav-link active">Relatórios</a>
+  <a href="/" class="nav-link">Dashboard</a>
+  <a href="/reports" class="nav-link active">📊 Relatórios</a>
+  <a href="/control" class="nav-link">⚙️ Controle</a>
 </header>
 
-<!-- Cards de métricas -->
 <div class="grid" id="summary-cards">
   <div class="card"><div class="label">Win Rate</div><div class="value" id="c-winrate">—</div><div class="sub" id="c-trades">— trades</div></div>
   <div class="card"><div class="label">PnL Total</div><div class="value" id="c-pnl">—</div><div class="sub">acumulado</div></div>
@@ -185,7 +100,6 @@
   <div class="card"><div class="label">Profit Factor</div><div class="value" id="c-pf">—</div><div class="sub">ganho / perda</div></div>
 </div>
 
-<!-- Equity Curve -->
 <section>
   <div class="section-header">
     <h2>📈 Equity Curve</h2>
@@ -198,7 +112,6 @@
   <div id="equity-chart"></div>
 </section>
 
-<!-- Tabela de trades -->
 <section>
   <div class="section-header">
     <h2>💼 Histórico de Trades</h2>
@@ -209,8 +122,8 @@
         <option value="LOSS">LOSS</option>
         <option value="PENDING">PENDING</option>
       </select>
-      <input type="date" id="f-date-from" onchange="applyFilters()" placeholder="De" />
-      <input type="date" id="f-date-to"   onchange="applyFilters()" placeholder="Até" />
+      <input type="date" id="f-date-from" onchange="applyFilters()" />
+      <input type="date" id="f-date-to"   onchange="applyFilters()" />
       <button class="btn btn-green" onclick="exportCSV()">⬇ Exportar CSV</button>
     </div>
   </div>
@@ -219,9 +132,7 @@
       <th>#</th><th>Direção</th><th>Entrada</th><th>Saída</th>
       <th>PnL %</th><th>Resultado</th><th>Data</th>
     </tr></thead>
-    <tbody id="trades-body">
-      <tr><td colspan="7" class="empty-row">Carregando...</td></tr>
-    </tbody>
+    <tbody id="trades-body"><tr><td colspan="7" class="empty-row">Carregando...</td></tr></tbody>
   </table>
   <div class="pagination">
     <button id="btn-prev" onclick="prevPage()" disabled>&#8592; Anterior</button>
@@ -231,182 +142,102 @@
 </section>
 
 <script>
-  const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:8000'
-    : '';
+  const API = (window.API_URL || 'https://roboto-tau3.onrender.com').replace(/\/$/, '');
+  let currentPage = 1, totalPages = 1, currentSym = 'BTCUSDT';
 
-  let currentPage = 1;
-  let totalPages  = 1;
-  let currentSym  = 'BTCUSDT';
-
-  function fmt(v, d = 2) {
-    if (v == null || v === '') return '—';
-    return Number(v).toFixed(d);
-  }
+  function fmt(v, d=2) { if (v==null||v==='') return '—'; return Number(v).toFixed(d); }
   function fmtDate(s) {
     if (!s) return '—';
     const d = new Date(s);
-    return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
   }
 
-  // ----------------------------------------------------------
-  // Summary cards
-  // ----------------------------------------------------------
   async function loadSummary(symbol) {
     try {
-      const data = await fetch(`${API}/reports/summary?symbol=${symbol}`).then(r => r.json());
-
+      const data = await fetch(`${API}/reports/summary?symbol=${symbol}`).then(r=>r.json());
       const wr = document.getElementById('c-winrate');
-      wr.textContent = data.win_rate != null ? `${fmt(data.win_rate)}%` : '—';
-      wr.className = 'value ' + (data.win_rate >= 55 ? 'green' : data.win_rate >= 40 ? 'yellow' : 'red');
-
+      wr.textContent = data.win_rate!=null?`${fmt(data.win_rate)}%`:'—';
+      wr.className = 'value '+(data.win_rate>=55?'green':data.win_rate>=40?'yellow':'red');
       const pnl = document.getElementById('c-pnl');
-      pnl.textContent = data.pnl_total != null ? `${data.pnl_total > 0 ? '+' : ''}${fmt(data.pnl_total)}%` : '—';
-      pnl.className = 'value ' + (data.pnl_total > 0 ? 'green' : data.pnl_total < 0 ? 'red' : '');
-
+      pnl.textContent = data.pnl_total!=null?`${data.pnl_total>0?'+':''}${fmt(data.pnl_total)}%`:'—';
+      pnl.className = 'value '+(data.pnl_total>0?'green':data.pnl_total<0?'red':'');
       const dd = document.getElementById('c-dd');
-      dd.textContent = data.max_drawdown != null ? `${fmt(data.max_drawdown)}%` : '—';
-      dd.className = 'value ' + (data.max_drawdown > 15 ? 'red' : data.max_drawdown > 8 ? 'yellow' : 'green');
-
+      dd.textContent = data.max_drawdown!=null?`${fmt(data.max_drawdown)}%`:'—';
+      dd.className = 'value '+(data.max_drawdown>15?'red':data.max_drawdown>8?'yellow':'green');
       const sh = document.getElementById('c-sharpe');
-      sh.textContent = data.sharpe_ratio != null ? fmt(data.sharpe_ratio) : '—';
-      sh.className = 'value ' + (data.sharpe_ratio >= 1 ? 'green' : data.sharpe_ratio >= 0 ? 'yellow' : 'red');
-
+      sh.textContent = data.sharpe_ratio!=null?fmt(data.sharpe_ratio):'—';
+      sh.className = 'value '+(data.sharpe_ratio>=1?'green':data.sharpe_ratio>=0?'yellow':'red');
       const pf = document.getElementById('c-pf');
-      pf.textContent = data.profit_factor != null ? fmt(data.profit_factor) : '—';
-      pf.className = 'value ' + (data.profit_factor >= 1.5 ? 'green' : data.profit_factor >= 1 ? 'yellow' : 'red');
-
-      document.getElementById('c-trades').textContent = `${data.total_trades ?? 0} trades`;
-    } catch (e) {
-      console.error('summary error:', e);
-    }
+      pf.textContent = data.profit_factor!=null?fmt(data.profit_factor):'—';
+      pf.className = 'value '+(data.profit_factor>=1.5?'green':data.profit_factor>=1?'yellow':'red');
+      document.getElementById('c-trades').textContent = `${data.total_trades??0} trades`;
+    } catch(e) { console.error('summary:',e); }
   }
 
-  // ----------------------------------------------------------
-  // Equity curve
-  // ----------------------------------------------------------
   async function loadEquityCurve(symbol) {
     const el = document.getElementById('equity-chart');
     try {
-      const data = await fetch(`${API}/reports/equity-curve?symbol=${symbol}`).then(r => r.json());
-      const pts  = data.points || [];
-
-      if (!pts.length) {
-        el.innerHTML = '<div style="color:#555;padding:40px;text-align:center">Sem dados de equity ainda</div>';
-        return;
-      }
-
-      const xs  = pts.map(p => p.ts || '');
-      const ys  = pts.map(p => p.equity);
-      const colors = ys.map((y, i) => i === 0 ? '#7c3aed' : y >= ys[i - 1] ? '#4caf50' : '#f44336');
-
-      Plotly.newPlot(el, [{
-        x: xs, y: ys,
-        type: 'scatter', mode: 'lines+markers',
-        line:   { color: '#7c3aed', width: 2 },
-        marker: { color: colors, size: 5 },
-        name:   'Equity (%)',
-        hovertemplate: '%{x}<br>Equity: %{y:.2f}%<extra></extra>',
-      }], {
-        paper_bgcolor: '#1a1d27',
-        plot_bgcolor:  '#1a1d27',
-        font:   { color: '#aaa', size: 11 },
-        margin: { t: 10, b: 40, l: 50, r: 20 },
-        xaxis:  { gridcolor: '#2a2d3a', tickfont: { size: 10 } },
-        yaxis:  { gridcolor: '#2a2d3a', ticksuffix: '%' },
-        hovermode: 'x unified',
-      }, { responsive: true, displayModeBar: false });
-
-    } catch (e) {
-      el.innerHTML = '<div style="color:#555;padding:40px;text-align:center">Erro ao carregar gráfico</div>';
-      console.error('equity curve error:', e);
-    }
+      const data = await fetch(`${API}/reports/equity-curve?symbol=${symbol}`).then(r=>r.json());
+      const pts = data.points||[];
+      if (!pts.length) { el.innerHTML='<div style="color:#555;padding:40px;text-align:center">Sem dados de equity ainda</div>'; return; }
+      const xs=pts.map(p=>p.ts||''), ys=pts.map(p=>p.equity);
+      const colors=ys.map((y,i)=>i===0?'#7c3aed':y>=ys[i-1]?'#4caf50':'#f44336');
+      Plotly.newPlot(el,[{
+        x:xs,y:ys,type:'scatter',mode:'lines+markers',
+        line:{color:'#7c3aed',width:2},marker:{color:colors,size:5},
+        name:'Equity (%)',hovertemplate:'%{x}<br>Equity: %{y:.2f}%<extra></extra>',
+      }],{
+        paper_bgcolor:'#1a1d27',plot_bgcolor:'#1a1d27',
+        font:{color:'#aaa',size:11},margin:{t:10,b:40,l:50,r:20},
+        xaxis:{gridcolor:'#2a2d3a',tickfont:{size:10}},
+        yaxis:{gridcolor:'#2a2d3a',ticksuffix:'%'},
+        hovermode:'x unified',
+      },{responsive:true,displayModeBar:false});
+    } catch(e) { el.innerHTML='<div style="color:#555;padding:40px;text-align:center">Erro ao carregar gráfico</div>'; }
   }
 
-  // ----------------------------------------------------------
-  // Tabela paginada
-  // ----------------------------------------------------------
-  async function loadTrades(page = 1) {
-    const symbol   = currentSym;
-    const result   = document.getElementById('f-result').value;
-    const dateFrom = document.getElementById('f-date-from').value;
-    const dateTo   = document.getElementById('f-date-to').value;
-
-    let url = `${API}/reports/trades?symbol=${symbol}&page=${page}&per_page=20`;
-    if (result)   url += `&result=${result}`;
-    if (dateFrom) url += `&date_from=${dateFrom}`;
-    if (dateTo)   url += `&date_to=${dateTo}`;
-
-    const tbody = document.getElementById('trades-body');
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-row">Carregando...</td></tr>';
-
+  async function loadTrades(page=1) {
+    const result=document.getElementById('f-result').value;
+    const dateFrom=document.getElementById('f-date-from').value;
+    const dateTo=document.getElementById('f-date-to').value;
+    let url=`${API}/reports/trades?symbol=${currentSym}&page=${page}&per_page=20`;
+    if (result)   url+=`&result=${result}`;
+    if (dateFrom) url+=`&date_from=${dateFrom}`;
+    if (dateTo)   url+=`&date_to=${dateTo}`;
+    const tbody=document.getElementById('trades-body');
+    tbody.innerHTML='<tr><td colspan="7" class="empty-row">Carregando...</td></tr>';
     try {
-      const data = await fetch(url).then(r => r.json());
-      const trades = data.trades || [];
-      totalPages   = data.total_pages || 1;
-      currentPage  = data.page || 1;
-
-      document.getElementById('page-info').textContent =
-        `pág. ${currentPage} / ${totalPages} (${data.total} trades)`;
-      document.getElementById('btn-prev').disabled = currentPage <= 1;
-      document.getElementById('btn-next').disabled = currentPage >= totalPages;
-
-      if (!trades.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-row">Nenhum trade encontrado</td></tr>';
-        return;
-      }
-
-      const offset = (currentPage - 1) * 20;
-      tbody.innerHTML = trades.map((t, i) => {
-        const pnlClass = t.pnl_pct > 0 ? 'style="color:#4caf50"' : t.pnl_pct < 0 ? 'style="color:#f44336"' : '';
-        const dirLabel = t.direction && t.strength
-          ? `${t.direction}_${t.strength}`.toUpperCase()
-          : (t.direction || '—');
-        return `
-          <tr>
-            <td style="color:#555">${offset + i + 1}</td>
-            <td><span class="tag ${dirLabel}">${dirLabel}</span></td>
-            <td>$${fmt(t.entry_price)}</td>
-            <td>${t.exit_price ? '$' + fmt(t.exit_price) : '—'}</td>
-            <td ${pnlClass}>${t.pnl_pct != null ? (t.pnl_pct > 0 ? '+' : '') + fmt(t.pnl_pct) + '%' : '—'}</td>
-            <td><span class="tag ${t.result || 'PENDING'}">${t.result || 'OPEN'}</span></td>
-            <td style="color:#888">${fmtDate(t.closed_at || t.created_at)}</td>
-          </tr>`;
+      const data=await fetch(url).then(r=>r.json());
+      const trades=data.trades||[];
+      totalPages=data.total_pages||1; currentPage=data.page||1;
+      document.getElementById('page-info').textContent=`pág. ${currentPage}/${totalPages} (${data.total} trades)`;
+      document.getElementById('btn-prev').disabled=currentPage<=1;
+      document.getElementById('btn-next').disabled=currentPage>=totalPages;
+      if (!trades.length) { tbody.innerHTML='<tr><td colspan="7" class="empty-row">Nenhum trade encontrado</td></tr>'; return; }
+      const offset=(currentPage-1)*20;
+      tbody.innerHTML=trades.map((t,i)=>{
+        const pnlClass=t.pnl_pct>0?'style="color:#4caf50"':t.pnl_pct<0?'style="color:#f44336"':'';
+        const dirLabel=t.direction&&t.strength?`${t.direction}_${t.strength}`.toUpperCase():(t.direction||'—');
+        return `<tr>
+          <td style="color:#555">${offset+i+1}</td>
+          <td><span class="tag ${dirLabel}">${dirLabel}</span></td>
+          <td>$${fmt(t.entry_price)}</td>
+          <td>${t.exit_price?'$'+fmt(t.exit_price):'—'}</td>
+          <td ${pnlClass}>${t.pnl_pct!=null?(t.pnl_pct>0?'+':'')+fmt(t.pnl_pct)+'%':'—'}</td>
+          <td><span class="tag ${t.result||'PENDING'}">${t.result||'OPEN'}</span></td>
+          <td style="color:#888">${fmtDate(t.closed_at||t.created_at)}</td>
+        </tr>`;
       }).join('');
-    } catch (e) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-row" style="color:#f44336">Erro ao carregar trades</td></tr>';
-      console.error('trades error:', e);
-    }
+    } catch(e) { tbody.innerHTML='<tr><td colspan="7" class="empty-row" style="color:#f44336">Erro ao carregar</td></tr>'; }
   }
 
-  function prevPage() { if (currentPage > 1) loadTrades(currentPage - 1); }
-  function nextPage() { if (currentPage < totalPages) loadTrades(currentPage + 1); }
-  function applyFilters() { currentPage = 1; loadTrades(1); }
+  function prevPage()    { if(currentPage>1) loadTrades(currentPage-1); }
+  function nextPage()    { if(currentPage<totalPages) loadTrades(currentPage+1); }
+  function applyFilters(){ currentPage=1; loadTrades(1); }
+  function exportCSV()   { window.location.href=`${API}/reports/export/csv?symbol=${currentSym}`; }
+  function changeSymbol(){ currentSym=document.getElementById('sym-select').value; currentPage=1; loadSummary(currentSym); loadEquityCurve(currentSym); loadTrades(1); }
 
-  // ----------------------------------------------------------
-  // Export CSV
-  // ----------------------------------------------------------
-  function exportCSV() {
-    window.location.href = `${API}/reports/export/csv?symbol=${currentSym}`;
-  }
-
-  // ----------------------------------------------------------
-  // Troca de símbolo
-  // ----------------------------------------------------------
-  function changeSymbol() {
-    currentSym  = document.getElementById('sym-select').value;
-    currentPage = 1;
-    loadSummary(currentSym);
-    loadEquityCurve(currentSym);
-    loadTrades(1);
-  }
-
-  // ----------------------------------------------------------
-  // Init
-  // ----------------------------------------------------------
-  loadSummary(currentSym);
-  loadEquityCurve(currentSym);
-  loadTrades(1);
+  loadSummary(currentSym); loadEquityCurve(currentSym); loadTrades(1);
 </script>
 </body>
 </html>
