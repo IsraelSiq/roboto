@@ -51,6 +51,7 @@ class RobotoBot:
         max_cycles:             Limite de ciclos (None = infinito)
         use_db:                 Persiste dados no Supabase (padrão: True)
         max_consecutive_losses: Circuit breaker: pausa após N perdas seguidas (padrão: 3)
+        news_limit:             Qtd de notícias para buscar por ciclo (padrão: 5)
     """
 
     def __init__(
@@ -64,6 +65,7 @@ class RobotoBot:
         max_cycles: int = None,
         use_db: bool = True,
         max_consecutive_losses: int = 3,
+        news_limit: int = 5,
     ):
         self.symbol = symbol
         self.interval = interval
@@ -71,6 +73,7 @@ class RobotoBot:
         self.max_cycles = max_cycles
         self.sleep_seconds = sleep_seconds or INTERVAL_SECONDS.get(interval, 300)
         self.keyword = SYMBOL_KEYWORDS.get(symbol, "bitcoin")
+        self.news_limit = news_limit
 
         self.client = BinanceClient()
         self.technical = TechnicalAnalyzer()
@@ -105,7 +108,6 @@ class RobotoBot:
         logger.info(f"[Bot] Iniciando Roboto | {self.symbol} {self.interval} | saldo=${self.risk.balance:,.2f}")
         self._print_header()
 
-        # Notifica Telegram: startup
         self.tg.startup(
             symbol=self.symbol,
             interval=self.interval,
@@ -136,7 +138,6 @@ class RobotoBot:
                         f"[Bot] ⚠️ Bot pausado pelo RiskManager: {self._stop_reason}. "
                         "Aguardando intervenção manual."
                     )
-                    # Notifica Telegram: circuit breaker
                     if "Circuit breaker" in self._stop_reason:
                         self.tg.circuit_breaker(
                             consecutive_losses=self.risk._consecutive_losses,
@@ -165,14 +166,12 @@ class RobotoBot:
                     cycles=self._cycle,
                 )
 
-            # Calcula win rate para o alerta de shutdown
             win_rate = None
             closed = self.risk.closed_trades
             if closed:
                 wins = sum(1 for t in closed if t.result == "WIN")
                 win_rate = wins / len(closed) * 100
 
-            # Notifica Telegram: shutdown
             self.tg.shutdown(
                 reason=self._stop_reason,
                 balance=self.risk.balance,
@@ -261,7 +260,6 @@ class RobotoBot:
                 f"[Monitor] {emoji} Trade fechado por {exit_reason} | "
                 f"{trade.pnl_summary()} | Saldo: ${self.risk.balance:,.2f}"
             )
-            # Notifica Telegram: trade fechado (silencioso)
             self.tg.trade_closed(
                 symbol=trade.symbol,
                 direction=trade.direction,
@@ -306,7 +304,10 @@ class RobotoBot:
 
     def _run_sentiment(self):
         try:
-            result = self.sentiment.get_news_sentiment(keyword=self.keyword, page_size=5)
+            result = self.sentiment.get_news_sentiment(
+                keyword=self.keyword,
+                news_limit=self.news_limit,
+            )
             logger.info(
                 f"[Ciclo {self._cycle}] Sentiment: {result.signal} "
                 f"(score={result.score:.2f}, {result.news_count} notícias, source={result.source})"
@@ -329,6 +330,7 @@ class RobotoBot:
         print(f"  Only strong      : {self.risk.only_strong}")
         print(f"  Ciclos           : {self.max_cycles or 'infinito'}")
         print(f"  Sleep            : {self.sleep_seconds}s entre ciclos")
+        print(f"  Notícias/ciclo   : {self.news_limit} (CryptoPanic + RSS)")
         print(f"  Supabase         : {'✅ conectado' if self.db else '⚠️  offline'}")
         print(f"  Telegram         : {'✅ ativo' if self.tg.enabled else '⚠️  desativado (sem token)'}")
         print("="*60 + "\n")
@@ -364,14 +366,15 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description="Roboto — Bot de trading automático")
-    parser.add_argument("--symbol",     default="BTCUSDT",  help="Par de moedas (padrão: BTCUSDT)")
-    parser.add_argument("--interval",   default="5m",       help="Timeframe (padrão: 5m)")
-    parser.add_argument("--balance",    default=10000.0,    type=float, help="Saldo inicial USDT")
-    parser.add_argument("--cycles",     default=5,          type=int,   help="Nº de ciclos (0=infinito)")
-    parser.add_argument("--sleep",      default=30,         type=int,   help="Seg entre ciclos (0=usa timeframe)")
-    parser.add_argument("--weak",       action="store_true",            help="Aceita sinais FRACOS também")
-    parser.add_argument("--no-db",      action="store_true",            help="Desativa persistência no Supabase")
-    parser.add_argument("--max-losses", default=3,          type=int,   help="Circuit breaker: N perdas consecutivas (padrão: 3)")
+    parser.add_argument("--symbol",      default="BTCUSDT",  help="Par de moedas (padrão: BTCUSDT)")
+    parser.add_argument("--interval",    default="5m",       help="Timeframe (padrão: 5m)")
+    parser.add_argument("--balance",     default=10000.0,    type=float, help="Saldo inicial USDT")
+    parser.add_argument("--cycles",      default=5,          type=int,   help="Nº de ciclos (0=infinito)")
+    parser.add_argument("--sleep",       default=30,         type=int,   help="Seg entre ciclos (0=usa timeframe)")
+    parser.add_argument("--weak",        action="store_true",            help="Aceita sinais FRACOS também")
+    parser.add_argument("--no-db",       action="store_true",            help="Desativa persistência no Supabase")
+    parser.add_argument("--max-losses",  default=3,          type=int,   help="Circuit breaker: N perdas consecutivas (padrão: 3)")
+    parser.add_argument("--news-limit",  default=5,          type=int,   help="Notícias por ciclo (padrão: 5)")
     args = parser.parse_args()
 
     bot = RobotoBot(
@@ -383,5 +386,6 @@ if __name__ == "__main__":
         max_cycles=args.cycles if args.cycles > 0 else None,
         use_db=not args.no_db,
         max_consecutive_losses=args.max_losses,
+        news_limit=args.news_limit,
     )
     bot.run()

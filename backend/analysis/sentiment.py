@@ -7,12 +7,11 @@ Arquitetura:
     - Pipeline FinBERT carregado uma única vez na inicialização (lazy loading)
     - Analisa lista de manchetes e retorna score agregado
     - Cache simples em memória para evitar reprocessamento
-    - Integração com NewsAPI via get_news_sentiment()
+    - Integração com NewsClient (CryptoPanic + RSS fallback) via get_news_sentiment()
 
 Diagnóstico robusto (#5):
     - Loga o raw output do FinBERT antes de qualquer pós-processamento
     - Emite WARNING quando score == 0.50 exato (sinal de fallback estático)
-    - Emite WARNING quando NewsAPI falha (sem internet, chave inválida, etc.)
     - Campo `source` em SentimentResult indica de onde veio o resultado:
         'finbert' | 'cache' | 'fallback_no_news' | 'fallback_newsapi_error' |
         'fallback_finbert_error' | 'fallback_empty_texts'
@@ -27,13 +26,11 @@ Uso:
 """
 
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from dotenv import load_dotenv
-from newsapi import NewsApiClient
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -86,7 +83,16 @@ class SentimentAnalyzer:
         self.cache_ttl = cache_ttl
         self._pipeline = None
         self._cache: dict[str, tuple[SentimentResult, float]] = {}
-        self._newsapi = NewsApiClient(api_key=os.getenv("NEWSAPI_KEY"))
+
+        # NewsClient lazy (instanciado na primeira chamada)
+        self._news_client = None
+
+    def _get_news_client(self):
+        """Retorna o NewsClient, instanciando na primeira chamada."""
+        if self._news_client is None:
+            from backend.market.news_client import NewsClient
+            self._news_client = NewsClient()
+        return self._news_client
 
     def _load_model(self):
         """Carrega o pipeline FinBERT na primeira chamada (lazy loading)."""
@@ -201,6 +207,11 @@ class SentimentAnalyzer:
             reason += f" | Score abaixo do threshold ({avg_score:.4f} < {self.min_confidence})"
             signal = "neutral"
 
+        if _is_suspicious_score(avg_score):
+            logger.warning(
+                f"[FinBERT] Score suspeito de fallback estático detectado: {avg_score:.6f}"
+            )
+
         sr = SentimentResult(
             signal=signal,
             score=round(avg_score, 4),
@@ -216,37 +227,52 @@ class SentimentAnalyzer:
         self._set_cache(cache_key, sr)
         return sr
 
-    def get_news_sentiment(self, keyword: str = "bitcoin", page_size: int = 10) -> SentimentResult:
-        """Busca notícias na NewsAPI e retorna sentiment."""
+    def get_news_sentiment(
+        self,
+        keyword: str = "bitcoin",
+        news_limit: int = 10,
+        # alias de compatibilidade (era page_size na NewsAPI)
+        page_size: Optional[int] = None,
+    ) -> SentimentResult:
+        """
+        Busca notícias via NewsClient (CryptoPanic + RSS fallback)
+        e retorna o sentiment classificado pelo FinBERT.
+
+        Args:
+            keyword:    Palavra-chave (ex: 'bitcoin', 'bnb')
+            news_limit: Máximo de notícias a buscar (padrão: 10)
+            page_size:  Alias legado de news_limit (ignorado se news_limit for fornecido)
+        """
+        limit = news_limit if page_size is None else page_size
         try:
-            resp = self._newsapi.get_everything(
-                q=keyword, language="en", sort_by="publishedAt", page_size=page_size,
-            )
-            if resp.get("status") != "ok":
-                return SentimentResult(
-                    signal="neutral", score=0.0, source="fallback_newsapi_error",
-                    reason=f"NewsAPI status={resp.get('status')}"
+            client = self._get_news_client()
+            news_list = client.get_news(keyword=keyword, limit=limit)
+
+            if not news_list:
+                logger.warning(
+                    f"[Sentiment] NewsClient não retornou notícias para '{keyword}' "
+                    "(CryptoPanic e RSS indisponíveis ou sem resultados)"
                 )
-            articles = resp.get("articles", [])
-            if not articles:
                 return SentimentResult(
                     signal="neutral", score=0.0, news_count=0,
-                    source="fallback_no_news", reason="Nenhuma notícia encontrada"
+                    source="fallback_no_news",
+                    reason="Nenhuma notícia disponível (NewsClient vazio)"
                 )
-            news_list = [
-                {
-                    "title": a.get("title", ""),
-                    "description": a.get("description", ""),
-                    "source": a.get("source", {}).get("name", ""),
-                    "url": a.get("url", ""),
-                }
-                for a in articles if a.get("title")
-            ]
+
+            logger.info(
+                f"[Sentiment] {len(news_list)} notícias obtidas para '{keyword}' "
+                f"via NewsClient"
+            )
             return self.analyze_news(news_list)
+
         except Exception as e:
+            logger.warning(
+                f"[Sentiment] Erro no NewsClient para '{keyword}': {e} — usando neutral"
+            )
             return SentimentResult(
                 signal="neutral", score=0.0,
-                source="fallback_newsapi_error", reason=f"Exceção: {e}"
+                source="fallback_newsapi_error",
+                reason=f"Exceção no NewsClient: {e}"
             )
 
     def _get_cache(self, key: str) -> Optional[SentimentResult]:
