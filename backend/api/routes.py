@@ -4,24 +4,25 @@ Expõe endpoints para o dashboard e integração com Supabase.
 
 Endpoints:
     GET  /                      — health check (legado)
-    GET  /health                — liveness probe para Render / Docker HEALTHCHECK (#30)
-    GET  /status                — status do bot (rodando, saldo, drawdown, finbert_loaded)
-    GET  /signal                — último sinal gerado (memória)
-    GET  /signals               — histórico de sinais (Supabase)
-    GET  /trades                — trades da sessão atual (memória)
-    GET  /trades/history        — histórico de trades (Supabase)
-    GET  /sessions              — histórico de sessões (Supabase)
+    GET  /health                — liveness probe (#30)
+    GET  /metrics/health        — status detalhado de todas as deps (#31)
+    GET  /status                — status do bot
+    GET  /signal                — último sinal
+    GET  /signals               — histórico de sinais
+    GET  /trades                — trades da sessão
+    GET  /trades/history        — histórico de trades
+    GET  /sessions              — histórico de sessões
     GET  /metrics               — métricas de performance
-    GET  /candles               — últimos candles do símbolo
+    GET  /candles               — candles do símbolo
     GET  /price                 — preço atual
-    GET  /warmup                — pré-aquece o FinBERT em background (#14)
-    GET  /reports/summary       — resumo geral de performance (#29)
-    GET  /reports/trades        — histórico paginado com filtros (#29)
-    GET  /reports/export/csv    — exporta trades para CSV (#29)
-    GET  /reports/equity-curve  — série temporal para gráfico (#29)
-    POST /bot/start             — inicia o loop do bot  [requer Bearer token se API_TOKEN no .env]
-    POST /bot/stop              — para o loop do bot    [requer Bearer token se API_TOKEN no .env]
-    POST /bot/resume            — retoma após pausa     [requer Bearer token se API_TOKEN no .env]
+    GET  /warmup                — pré-aquece FinBERT
+    GET  /reports/summary       — resumo geral (#29)
+    GET  /reports/trades        — histórico paginado (#29)
+    GET  /reports/export/csv    — exporta CSV (#29)
+    GET  /reports/equity-curve  — equity curve (#29)
+    POST /bot/start             — inicia bot [Bearer token]
+    POST /bot/stop              — para bot  [Bearer token]
+    POST /bot/resume            — retoma bot [Bearer token]
 """
 
 import csv
@@ -51,8 +52,34 @@ app = FastAPI(
 )
 
 # ----------------------------------------------------------
-# CORS (#30) — aceita origens configuradas via ALLOWED_ORIGINS
-# Ex no .env: ALLOWED_ORIGINS=https://roboto.vercel.app,http://localhost:3000
+# LOG ESTRUTURADO JSON (#31)
+# LOG_FORMAT=json no .env ativa JSON logging
+# ----------------------------------------------------------
+
+if os.getenv("LOG_FORMAT", "").lower() == "json":
+    import json
+    import time as _time
+
+    class _JsonFormatter(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            log = {
+                "ts":      datetime.utcfromtimestamp(record.created).isoformat() + "Z",
+                "level":   record.levelname,
+                "logger":  record.name,
+                "msg":     record.getMessage(),
+            }
+            if record.exc_info:
+                log["exc"] = self.formatException(record.exc_info)
+            return json.dumps(log, ensure_ascii=False)
+
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(_JsonFormatter())
+    logging.root.handlers = [_handler]
+    logging.root.setLevel(logging.INFO)
+    logger.info("[API] Log estruturado JSON ativado")
+
+# ----------------------------------------------------------
+# CORS (#30)
 # ----------------------------------------------------------
 
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
@@ -64,29 +91,24 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=_cors_origins != ["*"],  # credentials only when origins are explicit
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Serve o dashboard estático se a pasta existir
 _frontend_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
 if os.path.isdir(_frontend_path):
     app.mount("/dashboard", StaticFiles(directory=_frontend_path, html=True), name="dashboard")
 
 # ----------------------------------------------------------
-# AUTH — Bearer token simples
+# AUTH
 # ----------------------------------------------------------
 
 _API_TOKEN: Optional[str] = os.getenv("API_TOKEN") or None
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 if not _API_TOKEN:
-    logger.warning(
-        "[API] API_TOKEN não definido no .env — "
-        "endpoints POST /bot/* estão ABERTOS. "
-        "Defina API_TOKEN antes de expor na internet."
-    )
+    logger.warning("[API] API_TOKEN não definido — POST /bot/* estão ABERTOS.")
 
 
 def verify_token(
@@ -95,10 +117,7 @@ def verify_token(
     if _API_TOKEN is None:
         return
     if credentials is None or credentials.credentials != _API_TOKEN:
-        raise HTTPException(
-            status_code=401,
-            detail="Token inválido ou ausente. Use: Authorization: Bearer <API_TOKEN>",
-        )
+        raise HTTPException(status_code=401, detail="Token inválido ou ausente.")
 
 
 # ----------------------------------------------------------
@@ -108,8 +127,8 @@ def verify_token(
 _bot: Optional[RobotoBot] = None
 _bot_thread: Optional[threading.Thread] = None
 _last_signal: Optional[dict] = None
-
 _client: Optional[BinanceClient] = None
+
 
 def _get_client() -> BinanceClient:
     global _client
@@ -119,6 +138,7 @@ def _get_client() -> BinanceClient:
 
 
 _db = None
+
 def _get_db():
     global _db
     if _db is None:
@@ -126,11 +146,10 @@ def _get_db():
             from backend.db.supabase_client import SupabaseClient
             _db = SupabaseClient()
         except Exception as e:
-            logger.warning(f"Supabase indisponível na API: {e}")
+            logger.warning(f"Supabase indisponível: {e}")
     return _db
 
 
-# Instância global do SentimentAnalyzer para warmup (#14)
 _sentiment_analyzer = None
 
 def _get_sentiment_analyzer():
@@ -142,36 +161,21 @@ def _get_sentiment_analyzer():
 
 
 def _warmup_finbert_background():
-    """Dispara warmup do FinBERT em thread separada — não bloqueia startup (#14)."""
     try:
         analyzer = _get_sentiment_analyzer()
         if not analyzer.is_model_loaded:
-            logger.info("[Warmup] Iniciando pré-aquecimento do FinBERT em background...")
+            logger.info("[Warmup] Iniciando pré-aquecimento do FinBERT...")
             ok = analyzer.warmup()
-            if ok:
-                logger.info("[Warmup] FinBERT pré-aquecido com sucesso ✅")
-            else:
-                logger.warning("[Warmup] Falha no pré-aquecimento do FinBERT ⚠️")
+            logger.info(f"[Warmup] FinBERT: {'ok' if ok else 'falhou'}")
     except Exception as e:
-        logger.error(f"[Warmup] Erro inesperado: {e}")
+        logger.error(f"[Warmup] Erro: {e}")
 
-
-# ----------------------------------------------------------
-# STARTUP: warmup automático (#14)
-# ----------------------------------------------------------
 
 @app.on_event("startup")
 async def startup_event():
-    """
-    Se WARMUP_ON_STARTUP=true no .env, pré-aquece o FinBERT em background
-    logo após o servidor subir. Evita latência na primeira requisição real.
-    """
     if os.getenv("WARMUP_ON_STARTUP", "false").lower() == "true":
-        logger.info("[Startup] WARMUP_ON_STARTUP=true — disparando warmup do FinBERT...")
         t = threading.Thread(target=_warmup_finbert_background, daemon=True)
         t.start()
-    else:
-        logger.info("[Startup] Warmup automático desativado (WARMUP_ON_STARTUP != true).")
 
 
 # ----------------------------------------------------------
@@ -188,7 +192,7 @@ class BotConfig(BaseModel):
 
 
 # ----------------------------------------------------------
-# ENDPOINTS — Health / Status
+# HEALTH / STATUS
 # ----------------------------------------------------------
 
 @app.get("/", tags=["Health"])
@@ -198,28 +202,29 @@ def root():
 
 @app.get("/health", tags=["Health"])
 def health():
-    """
-    Liveness probe para Render, Railway, Docker HEALTHCHECK e uptime monitors. (#30)
-    Retorna 200 + JSON mínimo. Não requer autenticação.
-    """
+    """Liveness probe rápido. Não testa dependências."""
     return {"status": "ok", "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/metrics/health", tags=["Health"])
+def metrics_health():
+    """
+    Status detalhado de todas as dependências (#31).
+    Binance, Supabase, FinBERT + uptime + version.
+    """
+    from backend.api.health import get_health
+    return get_health()
 
 
 @app.get("/status", tags=["Bot"])
 def get_status():
-    """Status completo do bot, incluindo estado do modelo FinBERT."""
     finbert_loaded = _get_sentiment_analyzer().is_model_loaded
     if _bot is None:
         return {
-            "running": False,
-            "paused": False,
-            "symbol": None,
-            "balance": None,
-            "drawdown_pct": None,
-            "trades_today": 0,
-            "total_trades": 0,
-            "open_trade": None,
-            "finbert_loaded": finbert_loaded,
+            "running": False, "paused": False, "symbol": None,
+            "balance": None, "drawdown_pct": None,
+            "trades_today": 0, "total_trades": 0,
+            "open_trade": None, "finbert_loaded": finbert_loaded,
         }
     s = _bot.risk.status()
     ot = _bot.risk._open_trade
@@ -237,11 +242,9 @@ def get_status():
         "consecutive_losses": s.get("consecutive_losses", 0),
         "finbert_loaded": finbert_loaded,
         "open_trade": {
-            "id": ot.id,
-            "direction": ot.direction,
+            "id": ot.id, "direction": ot.direction,
             "entry_price": ot.entry_price,
-            "stop_loss": ot.stop_loss,
-            "take_profit": ot.take_profit,
+            "stop_loss": ot.stop_loss, "take_profit": ot.take_profit,
             "opened_at": str(ot.opened_at),
         } if ot else None,
     }
@@ -249,24 +252,16 @@ def get_status():
 
 @app.get("/warmup", tags=["Health"])
 def warmup_model():
-    """
-    Pré-aquece o modelo FinBERT em background (#14).
-    Retorna imediatamente.
-    """
     analyzer = _get_sentiment_analyzer()
     if analyzer.is_model_loaded:
         return {"status": "already_loaded", "finbert_loaded": True}
     t = threading.Thread(target=_warmup_finbert_background, daemon=True)
     t.start()
-    return {
-        "status": "warming_up",
-        "message": "FinBERT carregando em background. Verifique GET /status → `finbert_loaded`.",
-        "finbert_loaded": False,
-    }
+    return {"status": "warming_up", "finbert_loaded": False}
 
 
 # ----------------------------------------------------------
-# ENDPOINTS — Signals
+# SIGNALS
 # ----------------------------------------------------------
 
 @app.get("/signal", tags=["Signals"])
@@ -288,7 +283,7 @@ def get_signals(
 
 
 # ----------------------------------------------------------
-# ENDPOINTS — Trades
+# TRADES
 # ----------------------------------------------------------
 
 @app.get("/trades", tags=["Trades"])
@@ -297,17 +292,11 @@ def get_trades():
         return {"trades": [], "total": 0}
     trades = [
         {
-            "id": t.id,
-            "symbol": t.symbol,
-            "direction": t.direction,
-            "strength": t.strength,
-            "entry_price": t.entry_price,
-            "exit_price": t.exit_price,
-            "stop_loss": t.stop_loss,
-            "take_profit": t.take_profit,
-            "pnl_pct": t.pnl_pct,
-            "result": t.result,
-            "opened_at": str(t.opened_at),
+            "id": t.id, "symbol": t.symbol, "direction": t.direction,
+            "strength": t.strength, "entry_price": t.entry_price,
+            "exit_price": t.exit_price, "stop_loss": t.stop_loss,
+            "take_profit": t.take_profit, "pnl_pct": t.pnl_pct,
+            "result": t.result, "opened_at": str(t.opened_at),
             "closed_at": str(t.closed_at),
         }
         for t in _bot.risk.closed_trades
@@ -327,7 +316,7 @@ def get_trades_history(
 
 
 # ----------------------------------------------------------
-# ENDPOINTS — Sessions
+# SESSIONS
 # ----------------------------------------------------------
 
 @app.get("/sessions", tags=["Sessions"])
@@ -337,17 +326,14 @@ def get_sessions():
         raise HTTPException(status_code=503, detail="Supabase indisponível")
     try:
         res = db.client.table("bot_sessions") \
-            .select("*") \
-            .order("started_at", desc=True) \
-            .limit(20) \
-            .execute()
+            .select("*").order("started_at", desc=True).limit(20).execute()
         return {"sessions": res.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ----------------------------------------------------------
-# ENDPOINTS — Metrics
+# METRICS
 # ----------------------------------------------------------
 
 @app.get("/metrics", tags=["Metrics"])
@@ -357,22 +343,16 @@ def get_metrics():
     from backend.risk.metrics import PerformanceMetrics
     result = PerformanceMetrics(_bot.risk.closed_trades).calculate()
     return {
-        "total_trades": result.total_trades,
-        "wins": result.wins,
-        "losses": result.losses,
-        "win_rate": result.win_rate,
-        "profit_factor": result.profit_factor,
-        "max_drawdown": result.max_drawdown,
-        "sharpe_ratio": result.sharpe_ratio,
-        "avg_win_pct": result.avg_win_pct,
-        "avg_loss_pct": result.avg_loss_pct,
-        "total_pnl_pct": result.total_pnl_pct,
-        "approved": result.approved,
+        "total_trades": result.total_trades, "wins": result.wins, "losses": result.losses,
+        "win_rate": result.win_rate, "profit_factor": result.profit_factor,
+        "max_drawdown": result.max_drawdown, "sharpe_ratio": result.sharpe_ratio,
+        "avg_win_pct": result.avg_win_pct, "avg_loss_pct": result.avg_loss_pct,
+        "total_pnl_pct": result.total_pnl_pct, "approved": result.approved,
     }
 
 
 # ----------------------------------------------------------
-# ENDPOINTS — Reports (#29)
+# REPORTS (#29)
 # ----------------------------------------------------------
 
 @app.get("/reports/summary", tags=["Reports"])
@@ -380,55 +360,36 @@ def get_reports_summary(symbol: str = Query("BTCUSDT")):
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
-
     trades = db.get_trades(symbol=symbol, limit=500)
     closed = [t for t in trades if t.get("result") in ("WIN", "LOSS")]
-
     if not closed:
-        return {
-            "symbol": symbol, "total_trades": 0,
-            "win_rate": None, "pnl_total": None,
-            "max_drawdown": None, "sharpe_ratio": None, "profit_factor": None,
-        }
-
+        return {"symbol": symbol, "total_trades": 0, "win_rate": None, "pnl_total": None,
+                "max_drawdown": None, "sharpe_ratio": None, "profit_factor": None}
     wins   = sum(1 for t in closed if t["result"] == "WIN")
     losses = sum(1 for t in closed if t["result"] == "LOSS")
     total  = len(closed)
     pnls   = [float(t["pnl_pct"] or 0) for t in closed]
-
     pnl_total    = round(sum(pnls), 4)
     win_rate     = round(wins / total * 100, 2) if total else 0
     gross_profit = sum(p for p in pnls if p > 0)
     gross_loss   = abs(sum(p for p in pnls if p < 0))
     profit_factor = round(gross_profit / gross_loss, 4) if gross_loss > 0 else None
-
     equity = peak = max_dd = 0.0
     for p in pnls:
         equity += p
-        if equity > peak:
-            peak = equity
+        if equity > peak: peak = equity
         dd = peak - equity
-        if dd > max_dd:
-            max_dd = dd
-    max_dd = round(max_dd, 4)
-
+        if dd > max_dd: max_dd = dd
     import statistics
     sharpe = None
     if len(pnls) >= 2:
         try:
-            mu  = statistics.mean(pnls)
-            std = statistics.stdev(pnls)
+            mu = statistics.mean(pnls); std = statistics.stdev(pnls)
             sharpe = round(mu / std * (252 ** 0.5), 4) if std > 0 else None
-        except Exception:
-            pass
-
-    return {
-        "symbol": symbol, "total_trades": total,
-        "wins": wins, "losses": losses,
-        "win_rate": win_rate, "pnl_total": pnl_total,
-        "max_drawdown": max_dd, "sharpe_ratio": sharpe,
-        "profit_factor": profit_factor,
-    }
+        except Exception: pass
+    return {"symbol": symbol, "total_trades": total, "wins": wins, "losses": losses,
+            "win_rate": win_rate, "pnl_total": pnl_total, "max_drawdown": round(max_dd, 4),
+            "sharpe_ratio": sharpe, "profit_factor": profit_factor}
 
 
 @app.get("/reports/trades", tags=["Reports"])
@@ -443,44 +404,26 @@ def get_reports_trades(
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
-
     all_trades = db.get_trades(symbol=symbol, limit=500)
     filtered   = all_trades
-
     if result:
         filtered = [t for t in filtered if t.get("result") == result.upper()]
-
     if date_from:
         try:
             dt_from = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
-            filtered = [
-                t for t in filtered
-                if t.get("created_at") and
-                datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")) >= dt_from
-            ]
-        except ValueError:
-            pass
-
+            filtered = [t for t in filtered if t.get("created_at") and
+                datetime.fromisoformat(t["created_at"].replace("Z","+00:00")) >= dt_from]
+        except ValueError: pass
     if date_to:
         try:
             dt_to = datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc)
-            filtered = [
-                t for t in filtered
-                if t.get("created_at") and
-                datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")) <= dt_to
-            ]
-        except ValueError:
-            pass
-
-    total     = len(filtered)
-    start     = (page - 1) * per_page
-    page_data = filtered[start:start + per_page]
-
-    return {
-        "trades": page_data, "total": total,
-        "page": page, "per_page": per_page,
-        "total_pages": max(1, -(-total // per_page)),
-    }
+            filtered = [t for t in filtered if t.get("created_at") and
+                datetime.fromisoformat(t["created_at"].replace("Z","+00:00")) <= dt_to]
+        except ValueError: pass
+    total = len(filtered)
+    start = (page - 1) * per_page
+    return {"trades": filtered[start:start+per_page], "total": total,
+            "page": page, "per_page": per_page, "total_pages": max(1, -(-total//per_page))}
 
 
 @app.get("/reports/export/csv", tags=["Reports"])
@@ -488,23 +431,17 @@ def export_trades_csv(symbol: str = Query("BTCUSDT")):
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
-
     trades = db.get_trades(symbol=symbol, limit=500)
-    cols   = ["id","symbol","direction","strength","entry_price","exit_price","pnl_pct","result","created_at","closed_at"]
-
+    cols   = ["id","symbol","direction","strength","entry_price","exit_price",
+              "pnl_pct","result","created_at","closed_at"]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
     writer.writeheader()
-    for t in trades:
-        writer.writerow({k: t.get(k, "") for k in cols})
+    for t in trades: writer.writerow({k: t.get(k, "") for k in cols})
     buf.seek(0)
-
     filename = f"roboto_trades_{symbol}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/reports/equity-curve", tags=["Reports"])
@@ -512,27 +449,21 @@ def get_equity_curve(symbol: str = Query("BTCUSDT")):
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
-
     trades = db.get_trades(symbol=symbol, limit=500)
     closed = [t for t in trades if t.get("result") in ("WIN","LOSS") and t.get("pnl_pct") is not None]
-
-    try:
-        closed.sort(key=lambda t: t.get("created_at") or "")
-    except Exception:
-        pass
-
+    try: closed.sort(key=lambda t: t.get("created_at") or "")
+    except Exception: pass
     points = []
     equity = 0.0
     for t in closed:
-        pnl = float(t["pnl_pct"])
-        equity += pnl
-        points.append({"ts": t.get("closed_at") or t.get("created_at"), "equity": round(equity, 4), "pnl_pct": round(pnl, 4)})
-
+        pnl = float(t["pnl_pct"]); equity += pnl
+        points.append({"ts": t.get("closed_at") or t.get("created_at"),
+                       "equity": round(equity, 4), "pnl_pct": round(pnl, 4)})
     return {"symbol": symbol, "points": points, "total": len(points)}
 
 
 # ----------------------------------------------------------
-# ENDPOINTS — Market
+# MARKET
 # ----------------------------------------------------------
 
 @app.get("/candles", tags=["Market"])
@@ -540,14 +471,12 @@ def get_candles(symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100)
     try:
         df = _get_client().get_candles(symbol=symbol, interval=interval, limit=limit)
         if df.empty:
-            raise HTTPException(status_code=502, detail="Nenhum candle recebido da Binance")
+            raise HTTPException(status_code=502, detail="Nenhum candle recebido")
         df_out = df[["open_time","open","high","low","close","volume"]].tail(50).copy()
         df_out["open_time"] = df_out["open_time"].astype(str)
         return {"candles": df_out.to_dict(orient="records"), "symbol": symbol, "interval": interval}
-    except HTTPException:
-        raise
+    except HTTPException: raise
     except Exception as e:
-        logger.error(f"Erro em /candles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -561,7 +490,7 @@ def get_price(symbol: str = "BTCUSDT"):
 
 
 # ----------------------------------------------------------
-# ENDPOINTS — Bot Control
+# BOT CONTROL
 # ----------------------------------------------------------
 
 @app.post("/bot/start", tags=["Bot"])
@@ -570,12 +499,9 @@ def start_bot(config: BotConfig, _: None = Depends(verify_token)):
     if _bot and _bot._running:
         return {"status": "already_running", "symbol": _bot.symbol}
     _bot = RobotoBot(
-        symbol=config.symbol,
-        interval=config.interval,
-        balance=config.balance,
-        only_strong=config.only_strong,
-        max_cycles=config.max_cycles,
-        sleep_seconds=config.sleep_seconds,
+        symbol=config.symbol, interval=config.interval,
+        balance=config.balance, only_strong=config.only_strong,
+        max_cycles=config.max_cycles, sleep_seconds=config.sleep_seconds,
     )
     _bot_thread = threading.Thread(target=_bot.run, daemon=True)
     _bot_thread.start()

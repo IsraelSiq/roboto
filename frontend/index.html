@@ -9,87 +9,77 @@
     body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; }
 
     header {
-      background: #1a1d27;
-      padding: 16px 32px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      border-bottom: 1px solid #2a2d3a;
-      flex-wrap: wrap;
+      background: #1a1d27; padding: 16px 32px;
+      display: flex; align-items: center; gap: 12px;
+      border-bottom: 1px solid #2a2d3a; flex-wrap: wrap;
     }
     header h1 { font-size: 1.3rem; color: #fff; flex: 1; }
-    .badge {
-      padding: 3px 10px;
-      border-radius: 20px;
-      font-size: 0.75rem;
-      font-weight: 600;
-    }
+
+    .badge { padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
     .badge.running  { background: #1a3a1a; color: #4caf50; }
     .badge.stopped  { background: #3a1a1a; color: #f44336; }
     .badge.offline  { background: #2a2a1a; color: #ff9800; }
+
     .nav-link {
-      color: #888;
-      text-decoration: none;
-      font-size: 0.85rem;
-      padding: 5px 12px;
-      border-radius: 6px;
-      border: 1px solid #2a2d3a;
-      transition: all 0.15s;
+      color: #888; text-decoration: none; font-size: 0.85rem;
+      padding: 5px 12px; border-radius: 6px; border: 1px solid #2a2d3a; transition: all 0.15s;
     }
     .nav-link:hover { color: #fff; border-color: #4a4d5a; background: #1e2130; }
     .nav-link.active { color: #fff; border-color: #7c3aed; background: #1a1230; }
 
+    /* ---- Health Bar (#31) ---- */
+    .health-bar {
+      display: flex; align-items: center; gap: 16px;
+      padding: 8px 32px;
+      background: #13151f;
+      border-bottom: 1px solid #1e2130;
+      font-size: 0.78rem; color: #888;
+      flex-wrap: wrap;
+    }
+    .health-bar .dep {
+      display: flex; align-items: center; gap: 5px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block; flex-shrink: 0;
+    }
+    .dot.ok      { background: #4caf50; box-shadow: 0 0 4px #4caf5088; }
+    .dot.error   { background: #f44336; box-shadow: 0 0 4px #f4433688; }
+    .dot.loading { background: #555; }
+    .health-bar .latency { color: #555; font-size: 0.72rem; }
+    .health-bar .uptime  { margin-left: auto; color: #444; font-size: 0.72rem; }
+
+    /* ---- Cards ---- */
     .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 16px;
-      padding: 24px 32px 0;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px; padding: 24px 32px 0;
     }
-    .card {
-      background: #1a1d27;
-      border-radius: 10px;
-      padding: 18px 20px;
-      border: 1px solid #2a2d3a;
-    }
+    .card { background: #1a1d27; border-radius: 10px; padding: 18px 20px; border: 1px solid #2a2d3a; }
     .card .label { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
     .card .value { font-size: 1.5rem; font-weight: 700; margin-top: 6px; color: #fff; }
-    .card .value.green { color: #4caf50; }
-    .card .value.red   { color: #f44336; }
-    .card .value.yellow{ color: #ff9800; }
+    .card .value.green  { color: #4caf50; }
+    .card .value.red    { color: #f44336; }
+    .card .value.yellow { color: #ff9800; }
 
+    /* ---- Tables ---- */
     section {
-      margin: 24px 32px;
-      background: #1a1d27;
-      border-radius: 10px;
-      border: 1px solid #2a2d3a;
-      overflow: hidden;
+      margin: 24px 32px; background: #1a1d27;
+      border-radius: 10px; border: 1px solid #2a2d3a; overflow: hidden;
     }
     section h2 {
-      padding: 14px 20px;
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #aaa;
-      border-bottom: 1px solid #2a2d3a;
+      padding: 14px 20px; font-size: 0.9rem;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: #aaa; border-bottom: 1px solid #2a2d3a;
     }
     table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-    th {
-      padding: 10px 16px;
-      text-align: left;
-      color: #666;
-      font-weight: 500;
-      border-bottom: 1px solid #2a2d3a;
-    }
+    th { padding: 10px 16px; text-align: left; color: #666; font-weight: 500; border-bottom: 1px solid #2a2d3a; }
     td { padding: 10px 16px; border-bottom: 1px solid #1e2130; }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #1e2235; }
 
     .tag {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: 600;
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 0.75rem; font-weight: 600;
     }
     .tag.CALL_FORTE, .tag.WIN  { background:#1a3a1a; color:#4caf50; }
     .tag.PUT_FORTE,  .tag.LOSS { background:#3a1a1a; color:#f44336; }
@@ -100,13 +90,22 @@
     .tag.positive              { background:#1a3a1a; color:#4caf50; }
     .tag.neutral               { background:#2a2a2a; color:#aaa; }
 
-    .refresh-bar {
-      text-align: center;
-      padding: 10px;
-      font-size: 0.75rem;
-      color: #555;
-    }
+    .refresh-bar { text-align: center; padding: 10px; font-size: 0.75rem; color: #555; }
     #countdown { color: #888; }
+
+    /* ---- Toast (#31) ---- */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: #2a1a1a; border: 1px solid #f4433644;
+      color: #f44336; padding: 12px 18px; border-radius: 8px;
+      font-size: 0.82rem; max-width: 320px;
+      display: none; z-index: 999;
+      animation: slideIn 0.2s ease;
+    }
+    @keyframes slideIn {
+      from { transform: translateY(20px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
   </style>
 </head>
 <body>
@@ -115,11 +114,30 @@
   <span style="font-size:1.5rem">🤖</span>
   <h1>Roboto Dashboard</h1>
   <span id="status-badge" class="badge offline">Carregando...</span>
-  <a href="/dashboard/" class="nav-link active">Dashboard</a>
-  <a href="/dashboard/reports.html" class="nav-link">📊 Relatórios</a>
+  <a href="/" class="nav-link active">Dashboard</a>
+  <a href="/reports" class="nav-link">📊 Relatórios</a>
 </header>
 
-<div class="grid" id="cards">
+<!-- Health Bar (#31) -->
+<div class="health-bar" id="health-bar">
+  <div class="dep">
+    <span class="dot loading" id="dot-binance"></span>
+    <span id="lbl-binance">Binance</span>
+    <span class="latency" id="lat-binance"></span>
+  </div>
+  <div class="dep">
+    <span class="dot loading" id="dot-supabase"></span>
+    <span id="lbl-supabase">Supabase</span>
+    <span class="latency" id="lat-supabase"></span>
+  </div>
+  <div class="dep">
+    <span class="dot loading" id="dot-finbert"></span>
+    <span id="lbl-finbert">FinBERT</span>
+  </div>
+  <span class="uptime" id="uptime"></span>
+</div>
+
+<div class="grid">
   <div class="card"><div class="label">Saldo</div><div class="value" id="c-balance">—</div></div>
   <div class="card"><div class="label">Drawdown</div><div class="value" id="c-drawdown">—</div></div>
   <div class="card"><div class="label">Trades Hoje</div><div class="value" id="c-trades-today">—</div></div>
@@ -151,9 +169,15 @@
 
 <div class="refresh-bar">Atualiza em <span id="countdown">30</span>s</div>
 
+<!-- Toast de erro (#31) -->
+<div id="toast"></div>
+
 <script>
-  const API = 'http://localhost:8000';
+  // URL da API: usa variavel global, env do Vite, ou fallback para producao
+  const API = (window.API_URL || 'https://roboto-tau3.onrender.com').replace(/\/$/, '');
+
   let timer = 30;
+  let apiOffline = false;
 
   function fmt(v, digits=2) {
     if (v == null) return '—';
@@ -164,33 +188,100 @@
     return new Date(s).toLocaleTimeString('pt-BR');
   }
 
+  // ---- Toast (#31) ----
+  let _toastTimer = null;
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.display = 'block';
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
+  }
+
+  // ---- Health Bar (#31) ----
+  function setDot(id, state, latency) {
+    const dot = document.getElementById('dot-' + id);
+    const lbl = document.getElementById('lbl-' + id);
+    const lat = document.getElementById('lat-' + id);
+    dot.className = 'dot ' + (state === true ? 'ok' : state === false ? 'error' : 'loading');
+    if (lat && latency != null) lat.textContent = latency + 'ms';
+  }
+
+  async function loadHealth() {
+    try {
+      const h = await fetch(`${API}/metrics/health`).then(r => r.json());
+      const deps = h.dependencies || {};
+
+      setDot('binance',  deps.binance?.ok,
+             deps.binance?.latency_ms);
+      setDot('supabase', deps.supabase?.ok,
+             deps.supabase?.latency_ms);
+
+      // FinBERT: ok=true mas loaded=false => amarelo (loading)
+      const fbOk = deps.finbert?.ok;
+      const fbLoaded = deps.finbert?.loaded;
+      const dotFb = document.getElementById('dot-finbert');
+      dotFb.className = 'dot ' + (fbLoaded ? 'ok' : fbOk === false ? 'error' : 'loading');
+      document.getElementById('lbl-finbert').textContent =
+        'FinBERT' + (fbLoaded ? '' : ' (não carregado)');
+
+      if (h.uptime_s != null) {
+        const u = h.uptime_s;
+        const up = u < 60 ? `${u}s` : u < 3600 ? `${Math.floor(u/60)}m` : `${Math.floor(u/3600)}h`;
+        document.getElementById('uptime').textContent = `uptime ${up} • v${h.version}`;
+      }
+
+      // Reset toast se API voltou
+      if (apiOffline) { apiOffline = false; }
+    } catch(e) {
+      setDot('binance', false);
+      setDot('supabase', false);
+      setDot('finbert', false);
+    }
+  }
+
+  // ---- Status ----
   async function loadStatus() {
     try {
       const [st, pr] = await Promise.all([
         fetch(`${API}/status`).then(r => r.json()),
         fetch(`${API}/price`).then(r => r.json()),
       ]);
+
+      if (apiOffline) { apiOffline = false; }
+
       const badge = document.getElementById('status-badge');
-      if (st.running) { badge.textContent = '🟢 Rodando'; badge.className = 'badge running'; }
-      else if (st.paused) { badge.textContent = '⏸ Pausado'; badge.className = 'badge offline'; }
-      else { badge.textContent = '⚫ Parado'; badge.className = 'badge stopped'; }
+      if (st.running)      { badge.textContent = '🟢 Rodando'; badge.className = 'badge running'; }
+      else if (st.paused)  { badge.textContent = '⏸ Pausado'; badge.className = 'badge offline'; }
+      else                 { badge.textContent = '⚫ Parado';  badge.className = 'badge stopped'; }
 
-      document.getElementById('c-balance').textContent = st.balance != null ? `$${Number(st.balance).toLocaleString('pt-BR', {minimumFractionDigits:2})}` : '—';
+      document.getElementById('c-balance').textContent =
+        st.balance != null
+          ? `$${Number(st.balance).toLocaleString('pt-BR', {minimumFractionDigits:2})}`
+          : '—';
 
-      const dd = document.getElementById('c-drawdown');
+      const dd  = document.getElementById('c-drawdown');
       const ddv = st.drawdown_pct;
       dd.textContent = ddv != null ? `${fmt(ddv)}%` : '—';
-      dd.className = 'value ' + (ddv > 10 ? 'red' : ddv > 5 ? 'yellow' : 'green');
+      dd.className   = 'value ' + (ddv > 10 ? 'red' : ddv > 5 ? 'yellow' : 'green');
 
       document.getElementById('c-trades-today').textContent = st.trades_today ?? '—';
-      document.getElementById('c-trades-total').textContent = st.total_trades ?? '—';
-      document.getElementById('c-price').textContent = pr.price != null ? `$${Number(pr.price).toLocaleString('pt-BR', {minimumFractionDigits:2})}` : '—';
+      document.getElementById('c-trades-total').textContent = st.total_trades  ?? '—';
+      document.getElementById('c-price').textContent =
+        pr.price != null
+          ? `$${Number(pr.price).toLocaleString('pt-BR', {minimumFractionDigits:2})}`
+          : '—';
     } catch(e) {
       document.getElementById('status-badge').textContent = '⚠ Offline';
-      document.getElementById('status-badge').className = 'badge offline';
+      document.getElementById('status-badge').className   = 'badge offline';
+      if (!apiOffline) {
+        apiOffline = true;
+        showToast('⚠️ API offline — tentando reconectar...');
+      }
     }
   }
 
+  // ---- Signals ----
   async function loadSignals() {
     try {
       const { signals } = await fetch(`${API}/signals?limit=10`).then(r => r.json());
@@ -212,6 +303,7 @@
     } catch(e) { console.error('signals:', e); }
   }
 
+  // ---- Trades ----
   async function loadTrades() {
     try {
       const { trades } = await fetch(`${API}/trades/history?limit=20`).then(r => r.json());
@@ -232,6 +324,7 @@
     } catch(e) { console.error('trades:', e); }
   }
 
+  // ---- Loop principal ----
   function refresh() {
     loadStatus();
     loadSignals();
@@ -239,8 +332,12 @@
     timer = 30;
   }
 
+  // Health em ciclo mais lento (60s)
+  loadHealth();
+  setInterval(loadHealth, 60_000);
+
   refresh();
-  setInterval(refresh, 30000);
+  setInterval(refresh, 30_000);
   setInterval(() => {
     timer--;
     document.getElementById('countdown').textContent = timer;
