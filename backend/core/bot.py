@@ -1,14 +1,15 @@
 """
 Roboto — Bot Principal
 Loop automático que une todos os módulos:
-    Binance → Técnico → Sentiment → Sinal → RiskManager → Trade → Métricas
+    Binance → Técnico → Macro → Sentiment → Sinal → RiskManager → Trade → Métricas
     + Supabase para persistência de sinais, trades e sessões
     + Telegram para alertas de startup, shutdown, circuit breaker e trades
 
 Uso:
     python -m backend.core.bot
     python -m backend.core.bot --symbol ETHUSDT --interval 1m --cycles 5
-    python -m backend.core.bot --max-losses 5
+    python -m backend.core.bot --no-macro
+    python -m backend.core.bot --macro-tf 4h
     python -m backend.core.bot --atr-mult 2.0 --rr 2.5
 """
 
@@ -21,6 +22,7 @@ from backend.market.binance_client import BinanceClient
 from backend.analysis.technical import TechnicalAnalyzer
 from backend.analysis.sentiment import SentimentAnalyzer
 from backend.analysis.signals import SignalCombiner
+from backend.analysis.macro_filter import MacroTrendFilter
 from backend.risk.manager import RiskManager
 from backend.risk.metrics import PerformanceMetrics
 from backend.market.symbols import SYMBOL_KEYWORDS
@@ -47,7 +49,7 @@ class RobotoBot:
         interval:               Timeframe dos candles (padrão: 5m)
         candle_limit:           Qtd de candles para análise técnica (padrão: 100)
         balance:                Saldo inicial simulado em USDT (padrão: 10000.0)
-        sleep_seconds:          Intervalo entre ciclos em segundos (None = usa o do timeframe)
+        sleep_seconds:          Intervalo entre ciclos em segundos
         only_strong:            Só opera sinais FORTES (padrão: True)
         max_cycles:             Limite de ciclos (None = infinito)
         use_db:                 Persiste dados no Supabase (padrão: True)
@@ -56,6 +58,8 @@ class RobotoBot:
         use_atr_stop:           Usa SL adaptativo por ATR (padrão: True)
         atr_multiplier:         Multiplicador do ATR para o SL (padrão: 1.5)
         rr_ratio:               Razão Risco:Recompensa para TP (padrão: 2.0)
+        macro_filter_enabled:   Ativa filtro de tendência macro (padrão: True)
+        macro_timeframe:        Timeframe do filtro macro (padrão: '1h')
     """
 
     def __init__(
@@ -73,6 +77,8 @@ class RobotoBot:
         use_atr_stop: bool = True,
         atr_multiplier: float = 1.5,
         rr_ratio: float = 2.0,
+        macro_filter_enabled: bool = True,
+        macro_timeframe: str = "1h",
     ):
         self.symbol = symbol
         self.interval = interval
@@ -81,11 +87,23 @@ class RobotoBot:
         self.sleep_seconds = sleep_seconds or INTERVAL_SECONDS.get(interval, 300)
         self.keyword = SYMBOL_KEYWORDS.get(symbol, "bitcoin")
         self.news_limit = news_limit
+        self.macro_timeframe = macro_timeframe
 
         self.client = BinanceClient()
         self.technical = TechnicalAnalyzer()
         self.sentiment = SentimentAnalyzer(min_confidence=0.6)
-        self.combiner = SignalCombiner(symbol=symbol, timeframe=interval)
+
+        self.macro_filter = (
+            MacroTrendFilter(enabled=True)
+            if macro_filter_enabled else
+            MacroTrendFilter(enabled=False)
+        )
+
+        self.combiner = SignalCombiner(
+            symbol=symbol,
+            timeframe=interval,
+            macro_filter=self.macro_filter,
+        )
         self.risk = RiskManager(
             balance=balance,
             only_strong=only_strong,
@@ -108,6 +126,7 @@ class RobotoBot:
         self._cycle = 0
         self._running = False
         self._stop_reason = "encerrado"
+        self._df_macro = None  # cache dos candles macro
 
     # ----------------------------------------------------------
     # LOOP PRINCIPAL
@@ -211,12 +230,16 @@ class RobotoBot:
         if df is None or df.empty:
             return
 
+        # Candles macro para filtro de tendência (#8)
+        if self.macro_filter.enabled:
+            self._df_macro = self._fetch_macro_candles()
+
         tech = self._run_technical(df)
         if tech is None:
             return
 
         sent = self._run_sentiment()
-        decision = self.combiner.combine(tech, sent)
+        decision = self.combiner.combine(tech, sent, df_macro=self._df_macro)
         logger.info(f"[Ciclo {self._cycle}] {decision.summary()}")
 
         signal_id = None
@@ -234,6 +257,7 @@ class RobotoBot:
                 "reason":           decision.reason,
                 "cycle":            self._cycle,
                 "mode":             "paper",
+                "macro_blocked":    decision.macro_blocked,
             })
 
         ok, reason = self.risk.can_trade(decision)
@@ -301,6 +325,23 @@ class RobotoBot:
             logger.error(f"[Ciclo {self._cycle}] Erro ao coletar candles: {e}")
             return None
 
+    def _fetch_macro_candles(self):
+        """Busca candles do timeframe macro para o filtro de tendência (#8)."""
+        try:
+            df = self.client.get_candles(
+                symbol=self.symbol,
+                interval=self.macro_timeframe,
+                limit=100,
+            )
+            logger.debug(
+                f"[MacroFilter] {len(df)} candles {self.macro_timeframe} recebidos "
+                f"| tendência: {self.macro_filter.status_str(df)}"
+            )
+            return df
+        except Exception as e:
+            logger.warning(f"[MacroFilter] Erro ao buscar candles {self.macro_timeframe}: {e}")
+            return None
+
     def _run_technical(self, df):
         try:
             result = self.technical.analyze(df)
@@ -336,10 +377,15 @@ class RobotoBot:
             if self.risk.use_atr_stop else
             f"Fixo {self.risk.stop_loss_pct}% / TP {self.risk.take_profit_pct}%"
         )
+        macro_str = (
+            f"ativo ({self.macro_timeframe}) | EMA{self.macro_filter.ema_fast}/EMA{self.macro_filter.ema_slow}"
+            if self.macro_filter.enabled else "desativado"
+        )
         print("\n" + "="*60)
         print(f"  🤖 Roboto — {self.symbol} {self.interval}")
         print(f"  Saldo inicial    : ${self.risk.initial_balance:,.2f}")
         print(f"  SL / TP          : {sl_mode_str}")
+        print(f"  Filtro macro     : {macro_str}")
         print(f"  Max trades/dia   : {self.risk.max_trades_day}")
         print(f"  Max drawdown     : {self.risk.max_drawdown_pct}%")
         print(f"  Circuit breaker  : {self.risk.max_consecutive_losses} perdas consecutivas")
@@ -394,6 +440,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-atr",      action="store_true",            help="Desativa SL adaptativo ATR (usa % fixo)")
     parser.add_argument("--atr-mult",    default=1.5,        type=float, help="Multiplicador ATR para SL (padrão: 1.5)")
     parser.add_argument("--rr",          default=2.0,        type=float, help="R:R mínimo para TP (padrão: 2.0)")
+    parser.add_argument("--no-macro",    action="store_true",            help="Desativa filtro de tendência macro")
+    parser.add_argument("--macro-tf",    default="1h",                   help="Timeframe do filtro macro (padrão: 1h)")
     args = parser.parse_args()
 
     bot = RobotoBot(
@@ -409,5 +457,7 @@ if __name__ == "__main__":
         use_atr_stop=not args.no_atr,
         atr_multiplier=args.atr_mult,
         rr_ratio=args.rr,
+        macro_filter_enabled=not args.no_macro,
+        macro_timeframe=args.macro_tf,
     )
     bot.run()

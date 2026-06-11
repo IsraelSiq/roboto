@@ -14,21 +14,10 @@ Tabela de decisão:
     PUT       | positive  | AGUARDAR
     AGUARDAR  | qualquer  | AGUARDAR
 
-Log detalhado (#9):
-    - Nível DEBUG exibe breakdown completo por componente
-    - Nível INFO mantém formato original (compatível com parsers existentes)
-    - SignalDecision agora expõe:
-        sentiment_raw       → raw scores do FinBERT {positive, negative, neutral}
-        sentiment_source    → origem do sentiment ('finbert'|'cache'|'fallback_*')
-        sentiment_reason    → motivo detalhado do sentiment
-        atr                 → ATR(14) propagado de TechnicalResult (#7)
-
-Uso:
-    from backend.analysis.signals import SignalCombiner
-    combiner = SignalCombiner()
-    decision = combiner.combine(technical_result, sentiment_result)
-    print(decision.final)           # CALL_FORTE | PUT_FORTE | CALL_FRACO | PUT_FRACO | AGUARDAR
-    print(decision.atr)             # ATR(14) do último candle (ou None)
+Filtro macro (#8):
+    Se macro_filter estiver ativo e tendência for desfavorável,
+    final → AGUARDAR independente do sinal técnico/sentiment.
+    SignalDecision.macro_blocked = True quando isso ocorre.
 """
 
 import logging
@@ -37,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+import pandas as pd
 from dotenv import load_dotenv
 
 from backend.analysis.technical import TechnicalResult
@@ -80,6 +70,9 @@ class SignalDecision:
     # ATR propagado de TechnicalResult (#7)
     atr: Optional[float] = None
 
+    # Filtro macro (#8)
+    macro_blocked: bool = False
+
     # --- Campos para diagnóstico (#9 + #5) ---
     sentiment_raw: dict = field(default_factory=dict)
     sentiment_source: str = "finbert"
@@ -120,13 +113,14 @@ class SignalDecision:
         }
         score_str = f"{self.sentiment_score:.2f}" if self.sentiment_score is not None else "N/A"
         atr_str = f" | ATR: {self.atr:.2f}" if self.atr is not None else ""
+        macro_str = " | 🚫 MACRO" if self.macro_blocked else ""
         return (
             f"{emoji.get(self.final, self.final)} | "
             f"Preço: ${self.current_price:,.2f} | "
             f"RSI: {self.rsi} | "
             f"Sentiment: {self.sentiment_signal} ({score_str}) | "
             f"Confiança: {self.confidence:.0%}"
-            f"{atr_str}"
+            f"{atr_str}{macro_str}"
         )
 
     def debug_breakdown(self) -> str:
@@ -153,6 +147,7 @@ class SignalDecision:
             f"│  Sent. source   : {self.sentiment_source}{source_flag}",
             f"│  Sent. reason   : {self.sentiment_reason}",
             f"│  Notícias       : {self.news_count}",
+            f"│  Macro bloqueio : {self.macro_blocked}",
             f"│  Confiança final: {self.confidence:.0%}",
             f"└─ Decisão        : {self.final} ────────────────────────────────────────────",
         ]
@@ -161,12 +156,13 @@ class SignalDecision:
 
 class SignalCombiner:
     """
-    Núcleo do robô — combina sinal técnico + sentiment.
+    Núcleo do robô — combina sinal técnico + sentiment + filtro macro.
 
     Args:
-        symbol:      Par de trading (ex: 'BTCUSDT')
-        timeframe:   Timeframe (ex: '5m')
-        only_strong: Se True, só retorna CALL_FORTE e PUT_FORTE (ignora sinais fracos)
+        symbol:         Par de trading (ex: 'BTCUSDT')
+        timeframe:      Timeframe (ex: '5m')
+        only_strong:    Se True, só retorna CALL_FORTE e PUT_FORTE
+        macro_filter:   Instância de MacroTrendFilter ou None para desativar
     """
 
     DECISION_TABLE = {
@@ -181,13 +177,25 @@ class SignalCombiner:
         ("AGUARDAR", "negative"): AGUARDAR,
     }
 
-    def __init__(self, symbol: str = "BTCUSDT", timeframe: str = "5m", only_strong: bool = False):
+    def __init__(
+        self,
+        symbol: str = "BTCUSDT",
+        timeframe: str = "5m",
+        only_strong: bool = False,
+        macro_filter=None,
+    ):
         self.symbol = symbol
         self.timeframe = timeframe
         self.only_strong = only_strong
+        self.macro_filter = macro_filter  # MacroTrendFilter | None
 
-    def combine(self, technical: TechnicalResult, sentiment: SentimentResult) -> SignalDecision:
-        """Combina sinal técnico + sentiment e retorna a decisão final."""
+    def combine(
+        self,
+        technical: TechnicalResult,
+        sentiment: SentimentResult,
+        df_macro: Optional[pd.DataFrame] = None,
+    ) -> SignalDecision:
+        """Combina sinal técnico + sentiment + filtro macro."""
         tech_signal = technical.signal
         sent_signal = sentiment.signal
 
@@ -209,8 +217,21 @@ class SignalCombiner:
         if self.only_strong and final in (CALL_FRACO, PUT_FRACO):
             final = AGUARDAR
 
+        # --- Filtro macro (#8) ---
+        macro_blocked = False
+        if self.macro_filter is not None and final != AGUARDAR:
+            direcao = "CALL" if final in (CALL_FORTE, CALL_FRACO) else "PUT"
+            macro_ok = self.macro_filter.tendencia_favoravel(df_macro, direcao)
+            if macro_ok is False:
+                logger.info(
+                    f"[MacroFilter] {direcao} bloqueado pela tendência macro — "
+                    f"sinal original era '{final}'"
+                )
+                final = AGUARDAR
+                macro_blocked = True
+
         confidence = self._calc_confidence(final, sentiment.score)
-        reason = self._build_reason(final, technical, sentiment)
+        reason = self._build_reason(final, technical, sentiment, macro_blocked)
 
         decision = SignalDecision(
             final=final,
@@ -226,13 +247,14 @@ class SignalCombiner:
             ema50=technical.ema50,
             bb_upper=technical.bb_upper,
             bb_lower=technical.bb_lower,
-            atr=technical.atr,          # ← propagado (#7)
+            atr=technical.atr,
             current_price=technical.current_price,
             sentiment_score=sentiment.score,
             news_count=sentiment.news_count,
             sentiment_raw=sentiment.raw_scores,
             sentiment_source=sentiment.source,
             sentiment_reason=sentiment.reason,
+            macro_blocked=macro_blocked,
         )
 
         logger.info(f"[Signal] {decision.summary()}")
@@ -248,7 +270,12 @@ class SignalCombiner:
         return round(min(0.50 + sentiment_score * 0.15, 0.75), 4)
 
     @staticmethod
-    def _build_reason(final: str, tech: TechnicalResult, sent: SentimentResult) -> str:
+    def _build_reason(
+        final: str,
+        tech: TechnicalResult,
+        sent: SentimentResult,
+        macro_blocked: bool = False,
+    ) -> str:
         raw_str = (
             f"raw={sent.raw_scores}" if sent.raw_scores
             else f"raw=N/A source={sent.source}"
@@ -258,6 +285,8 @@ class SignalCombiner:
             f"Sentiment: {sent.signal} score={sent.score:.4f} {raw_str} | {sent.news_count} notícias | {sent.reason}",
             f"Decisão: {final}",
         ]
+        if macro_blocked:
+            parts.append("Macro: BLOQUEADO (tendência desfavorável no 1h)")
         return " || ".join(parts)
 
 
@@ -269,16 +298,21 @@ if __name__ == "__main__":
     from backend.market.binance_client import BinanceClient
     from backend.analysis.technical import TechnicalAnalyzer
     from backend.analysis.sentiment import SentimentAnalyzer
+    from backend.analysis.macro_filter import MacroTrendFilter
     from backend.market.symbols import SYMBOL_KEYWORDS
 
     SYMBOL = "BTCUSDT"
     bc = BinanceClient()
-    df = bc.get_candles(symbol=SYMBOL, interval="5m", limit=100)
+    df5m = bc.get_candles(symbol=SYMBOL, interval="5m", limit=100)
+    df1h  = bc.get_candles(symbol=SYMBOL, interval="1h", limit=100)
+
     tech_analyzer = TechnicalAnalyzer()
-    tech = tech_analyzer.analyze(df)
+    tech = tech_analyzer.analyze(df5m)
     sent_analyzer = SentimentAnalyzer(min_confidence=0.6)
     keyword = SYMBOL_KEYWORDS.get(SYMBOL, "bitcoin")
     sent = sent_analyzer.get_news_sentiment(keyword=keyword, news_limit=5)
-    combiner = SignalCombiner(symbol=SYMBOL, timeframe="5m")
-    decision = combiner.combine(tech, sent)
+
+    macro = MacroTrendFilter()
+    combiner = SignalCombiner(symbol=SYMBOL, timeframe="5m", macro_filter=macro)
+    decision = combiner.combine(tech, sent, df_macro=df1h)
     print(f"\n{decision.debug_breakdown()}")
