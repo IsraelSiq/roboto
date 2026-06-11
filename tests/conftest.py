@@ -11,19 +11,16 @@ from unittest.mock import MagicMock
 
 
 @pytest.fixture(autouse=True)
-def mock_newsapi(monkeypatch):
-    """Evita chamadas reais à NewsAPI em todos os testes."""
+def mock_news_client(monkeypatch):
+    """Evita chamadas reais à NewsClient em todos os testes."""
     mock_client = MagicMock()
-    mock_client.get_everything.return_value = {
-        "status": "ok",
-        "articles": [
-            {"title": "Bitcoin rallies", "description": "BTC up 5%"},
-            {"title": "Crypto market grows", "description": "Altcoins follow"},
-        ],
-    }
+    mock_client.get_news.return_value = [
+        {"title": "Bitcoin rallies", "description": "BTC up 5%"},
+        {"title": "Crypto market grows", "description": "Altcoins follow"},
+    ]
     monkeypatch.setattr(
-        "backend.analysis.sentiment.NewsApiClient",
-        lambda **kwargs: mock_client,
+        "backend.market.news_client.NewsClient",
+        lambda: mock_client,
     )
     return mock_client
 
@@ -38,7 +35,7 @@ def mock_finbert_pipeline(monkeypatch):
          {"label": "neutral",  "score": 0.08}]
     ]
     monkeypatch.setattr(
-        "backend.analysis.sentiment.SentimentAnalyzer._load_model",
-        lambda self: setattr(self, "_pipeline", mock_pipe),
+        "backend.analysis.sentiment._FINBERT_PIPELINE",
+        mock_pipe,
     )
     return mock_pipe
