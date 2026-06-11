@@ -11,6 +11,12 @@ Issue #10 (backtest comparativo):
     - Suporte a SL adaptativo por ATR (use_atr_stop, atr_multiplier, rr_ratio)
     - Suporte ao filtro de tendência macro (macro_filter_enabled)
     - Reamostragem interna de candles 5m → macro TF para o filtro
+
+Fix #backtest-pause:
+    - Circuit breaker NÃO pausa o backtest: rm.resume() automático após cada
+      pausa, o backtest deve rodar candle a candle sem interrupções.
+    - window = df.iloc[:i+1] movido para dentro do bloco de análise (lazy copy)
+      para evitar .copy() desnecessário a cada candle.
 """
 
 import logging
@@ -78,6 +84,12 @@ class BacktestResult:
 class BacktestEngine:
     """
     Simula o bot sobre dados históricos candle a candle.
+
+    Diferenças importantes em relação ao bot real:
+        - Circuit breaker e drawdown causam pausa no RiskManager, mas
+          o backtest faz rm.resume() automático para não interromper
+          a simulação. Isso permite avaliar o comportamento da estratégia
+          em todo o período sem bias de survivorship.
 
     Args:
         symbol:              Par de trading
@@ -198,11 +210,11 @@ class BacktestEngine:
         )
 
         total_signals = 0
-        equity_curve = []
+        equity_curve  = []
         open_trade: Optional[Trade] = None
 
         start_date = str(df["open_time"].iloc[MIN_CANDLES])
-        end_date = str(df["open_time"].iloc[-1])
+        end_date   = str(df["open_time"].iloc[-1])
 
         logger.info(
             f"[Backtest] Iniciando {self.symbol} {self.interval} "
@@ -211,12 +223,12 @@ class BacktestEngine:
         )
 
         for i in range(MIN_CANDLES, len(df)):
-            window = df.iloc[:i+1].copy()
             current_candle = df.iloc[i]
-            current_price = float(current_candle["close"])
-            ts = str(current_candle["open_time"])
-            candle_date = pd.Timestamp(current_candle["open_time"]).date()
+            current_price  = float(current_candle["close"])
+            ts             = str(current_candle["open_time"])
+            candle_date    = pd.Timestamp(current_candle["open_time"]).date()
 
+            # --- Fecha trade aberto se atingiu SL ou TP ---
             if open_trade is not None:
                 exit_reason = rm.check_exit(open_trade, current_price)
                 if exit_reason == "SL":
@@ -226,13 +238,20 @@ class BacktestEngine:
                     rm.close_trade(open_trade, open_trade.take_profit)
                     open_trade = None
 
+            # --- Registra equity ---
             equity_curve.append((ts, rm.balance))
 
+            # --- Avalia sinal a cada 5 candles apenas ---
             if i % 5 != 0:
                 continue
 
+            # --- BACKTEST nunca fica pausado: resume automático após circuit breaker ---
             if rm.is_paused():
-                continue
+                logger.debug(f"[Backtest] Circuit breaker em {ts} — resumindo automático")
+                rm.resume()
+
+            # --- Janela e análise técnica (lazy: só copia quando vai analisar) ---
+            window = df.iloc[:i + 1]
 
             # Deriva df_macro por reamostragem da janela atual (#10)
             df_macro = None
@@ -263,6 +282,7 @@ class BacktestEngine:
                         f"tp={open_trade.take_profit} sl_mode={open_trade.stop_loss_mode}"
                     )
 
+        # Fecha trade ainda aberto no último candle
         if open_trade is not None:
             rm.close_trade(open_trade, float(df["close"].iloc[-1]))
 
