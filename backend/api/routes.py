@@ -8,26 +8,26 @@ Endpoints:
     GET  /signal          — último sinal gerado (memória)
     GET  /signals         — histórico de sinais (Supabase)
     GET  /trades          — trades da sessão atual (memória)
-    GET  /trades/history  — histórico de trades (Supabase)
+    GET  /trades/history  — histórico de trades (Supabase) — retorna array direto
     GET  /sessions        — histórico de sessões (Supabase)
     GET  /metrics         — métricas de performance
     GET  /candles         — últimos candles do símbolo
     GET  /price           — preço atual
-    POST /bot/start       — inicia o loop do bot
-    POST /bot/stop        — para o loop do bot
-    POST /bot/resume      — retoma após pausa por drawdown
+    POST /bot/start       — inicia o loop do bot  [requer Bearer token se API_TOKEN estiver no .env]
+    POST /bot/stop        — para o loop do bot    [requer Bearer token se API_TOKEN estiver no .env]
+    POST /bot/resume      — retoma após pausa    [requer Bearer token se API_TOKEN estiver no .env]
 """
 
 import logging
+import os
 import threading
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import os
 
 from backend.core.bot import RobotoBot
 from backend.market.binance_client import BinanceClient
@@ -52,12 +52,46 @@ _frontend_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
 if os.path.isdir(_frontend_path):
     app.mount("/dashboard", StaticFiles(directory=_frontend_path, html=True), name="dashboard")
 
-# Estado global do bot
+# ----------------------------------------------------------
+# AUTH — Bearer token simples
+# ----------------------------------------------------------
+
+_API_TOKEN: Optional[str] = os.getenv("API_TOKEN") or None
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+if not _API_TOKEN:
+    logger.warning(
+        "[API] API_TOKEN não definido no .env — "
+        "endpoints POST /bot/* estão ABERTOS. "
+        "Defina API_TOKEN antes de expor na internet."
+    )
+
+
+def verify_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer_scheme),
+):
+    """
+    Valida o Bearer token nos endpoints de controle do bot.
+    Se API_TOKEN não estiver definido no .env, a validação é ignorada
+    (modo dev local). Em produção, sempre defina API_TOKEN.
+    """
+    if _API_TOKEN is None:
+        return  # sem token configurado: aceita qualquer requisição (dev)
+    if credentials is None or credentials.credentials != _API_TOKEN:
+        raise HTTPException(
+            status_code=401,
+            detail="Token inválido ou ausente. Use: Authorization: Bearer <API_TOKEN>",
+        )
+
+
+# ----------------------------------------------------------
+# ESTADO GLOBAL
+# ----------------------------------------------------------
+
 _bot: Optional[RobotoBot] = None
 _bot_thread: Optional[threading.Thread] = None
 _last_signal: Optional[dict] = None
 
-# Lazy init — não instancia na importação para não travar o startup
 _client: Optional[BinanceClient] = None
 
 def _get_client() -> BinanceClient:
@@ -67,7 +101,6 @@ def _get_client() -> BinanceClient:
     return _client
 
 
-# Supabase (lazy init)
 _db = None
 def _get_db():
     global _db
@@ -129,6 +162,7 @@ def get_status():
         "drawdown_pct": s["drawdown_pct"],
         "trades_today": s["trades_today"],
         "total_trades": s["total_trades"],
+        "consecutive_losses": s.get("consecutive_losses", 0),
         "open_trade": {
             "id": ot.id,
             "direction": ot.direction,
@@ -190,12 +224,16 @@ def get_trades_history(
     symbol: str = Query("BTCUSDT"),
     limit: int = Query(100, ge=1, le=500),
 ):
-    """Histórico completo de trades persistidos no Supabase."""
+    """
+    Histórico completo de trades persistidos no Supabase.
+
+    Retorna array direto (não { trades, total }) para
+    compatibilidade com o dashboard frontend.
+    """
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
-    trades = db.get_trades(symbol=symbol, limit=limit)
-    return {"trades": trades, "total": len(trades)}
+    return db.get_trades(symbol=symbol, limit=limit)
 
 
 @app.get("/sessions", tags=["Sessions"])
@@ -265,8 +303,11 @@ def get_price(symbol: str = "BTCUSDT"):
 
 
 @app.post("/bot/start", tags=["Bot"])
-def start_bot(config: BotConfig):
-    """Inicia o loop do bot em background."""
+def start_bot(
+    config: BotConfig,
+    _: None = Depends(verify_token),
+):
+    """Inicia o loop do bot em background. Requer Bearer token se API_TOKEN estiver no .env."""
     global _bot, _bot_thread
     if _bot and _bot._running:
         return {"status": "already_running", "symbol": _bot.symbol}
@@ -284,8 +325,8 @@ def start_bot(config: BotConfig):
 
 
 @app.post("/bot/stop", tags=["Bot"])
-def stop_bot():
-    """Para o loop do bot."""
+def stop_bot(_: None = Depends(verify_token)):
+    """Para o loop do bot. Requer Bearer token se API_TOKEN estiver no .env."""
     if _bot is None or not _bot._running:
         return {"status": "not_running"}
     _bot.stop()
@@ -293,8 +334,8 @@ def stop_bot():
 
 
 @app.post("/bot/resume", tags=["Bot"])
-def resume_bot():
-    """Retoma o bot após pausa por drawdown."""
+def resume_bot(_: None = Depends(verify_token)):
+    """Retoma o bot após pausa por drawdown. Requer Bearer token se API_TOKEN estiver no .env."""
     if _bot is None:
         return {"status": "no_bot"}
     _bot.risk.resume()
