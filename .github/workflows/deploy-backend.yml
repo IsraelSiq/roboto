@@ -1,15 +1,14 @@
 # ============================================================
 # Deploy Backend (#30)
 #
-# Suporta 2 modos de deploy (configure via secret DEPLOY_MODE):
+# Suporta 2 modos de deploy (configure via GitHub Variable DEPLOY_MODE):
 #
-# Modo A — Render (recomendado para free tier):
-#   Secrets necessários: RENDER_DEPLOY_HOOK
-#   Como obter: Render dashboard > seu service > Settings > Deploy Hook
+# Modo A — Render (recomendado, default):
+#   Secrets: RENDER_DEPLOY_HOOK
+#   Como obter: Render > roboto-api > Settings > Deploy Hook
 #
 # Modo B — VPS via SSH + Docker:
-#   Secrets necessários: DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY
-#   O servidor deve ter Docker instalado e acesso ao GHCR.
+#   Secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY
 # ============================================================
 
 name: Deploy Backend
@@ -24,23 +23,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ----------------------------------------------------------
-  # Build Docker image e push para GitHub Container Registry
-  # ----------------------------------------------------------
   build:
     name: Build & Push Docker (GHCR)
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
-
     outputs:
       image: ${{ steps.meta.outputs.tags }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -58,7 +51,7 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push (stage api — sem torch)
+      - name: Build and push (stage api)
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -69,14 +62,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ----------------------------------------------------------
-  # Deploy via Render webhook (Modo A)
-  # ----------------------------------------------------------
   deploy-render:
     name: Trigger Render Deploy
     runs-on: ubuntu-latest
     needs: build
-    if: ${{ vars.DEPLOY_MODE == 'render' || vars.DEPLOY_MODE == '' }}
+    if: ${{ vars.DEPLOY_MODE != 'vps' }}
 
     steps:
       - name: Trigger Render deploy hook
@@ -86,16 +76,22 @@ jobs:
             -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}")
           echo "Render webhook status: $STATUS"
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
-            echo "::warning::Render webhook retornou $STATUS. Verifique o dashboard do Render."
+            echo "::warning::Render webhook retornou $STATUS"
           fi
 
-      - name: Skip (secret não configurado)
-        if: ${{ secrets.RENDER_DEPLOY_HOOK == '' }}
-        run: echo "RENDER_DEPLOY_HOOK não configurado — deploy manual necessário."
+      - name: Smoke test contra produção
+        run: |
+          echo "Aguardando 60s para o Render acordar..."
+          sleep 60
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://roboto-tau3.onrender.com/health)
+          echo "GET /health status: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Backend up!"
+          else
+            echo "::warning::Backend retornou $STATUS (pode estar hibernado)"
+          fi
 
-  # ----------------------------------------------------------
-  # Deploy via SSH + Docker pull (Modo B — VPS)
-  # ----------------------------------------------------------
   deploy-vps:
     name: Deploy via SSH (VPS)
     runs-on: ubuntu-latest
