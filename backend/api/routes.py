@@ -4,18 +4,19 @@ Expõe endpoints para o dashboard e integração com Supabase.
 
 Endpoints:
     GET  /                — health check
-    GET  /status          — status do bot (rodando, saldo, drawdown)
+    GET  /status          — status do bot (rodando, saldo, drawdown, finbert_loaded)
     GET  /signal          — último sinal gerado (memória)
     GET  /signals         — histórico de sinais (Supabase)
     GET  /trades          — trades da sessão atual (memória)
-    GET  /trades/history  — histórico de trades (Supabase) — retorna array direto
+    GET  /trades/history  — histórico de trades (Supabase)
     GET  /sessions        — histórico de sessões (Supabase)
     GET  /metrics         — métricas de performance
     GET  /candles         — últimos candles do símbolo
     GET  /price           — preço atual
-    POST /bot/start       — inicia o loop do bot  [requer Bearer token se API_TOKEN estiver no .env]
-    POST /bot/stop        — para o loop do bot    [requer Bearer token se API_TOKEN estiver no .env]
-    POST /bot/resume      — retoma após pausa    [requer Bearer token se API_TOKEN estiver no .env]
+    GET  /warmup          — pré-aquece o FinBERT em background (#14)
+    POST /bot/start       — inicia o loop do bot  [requer Bearer token se API_TOKEN no .env]
+    POST /bot/stop        — para o loop do bot    [requer Bearer token se API_TOKEN no .env]
+    POST /bot/resume      — retoma após pausa     [requer Bearer token se API_TOKEN no .env]
 """
 
 import logging
@@ -70,13 +71,8 @@ if not _API_TOKEN:
 def verify_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer_scheme),
 ):
-    """
-    Valida o Bearer token nos endpoints de controle do bot.
-    Se API_TOKEN não estiver definido no .env, a validação é ignorada
-    (modo dev local). Em produção, sempre defina API_TOKEN.
-    """
     if _API_TOKEN is None:
-        return  # sem token configurado: aceita qualquer requisição (dev)
+        return
     if credentials is None or credentials.credentials != _API_TOKEN:
         raise HTTPException(
             status_code=401,
@@ -113,6 +109,51 @@ def _get_db():
     return _db
 
 
+# Instância global do SentimentAnalyzer para warmup (#14)
+_sentiment_analyzer = None
+
+def _get_sentiment_analyzer():
+    global _sentiment_analyzer
+    if _sentiment_analyzer is None:
+        from backend.analysis.sentiment import SentimentAnalyzer
+        _sentiment_analyzer = SentimentAnalyzer()
+    return _sentiment_analyzer
+
+
+def _warmup_finbert_background():
+    """Dispara warmup do FinBERT em thread separada — não bloqueia startup (#14)."""
+    try:
+        analyzer = _get_sentiment_analyzer()
+        if not analyzer.is_model_loaded:
+            logger.info("[Warmup] Iniciando pré-aquecimento do FinBERT em background...")
+            ok = analyzer.warmup()
+            if ok:
+                logger.info("[Warmup] FinBERT pré-aquecido com sucesso ✅")
+            else:
+                logger.warning("[Warmup] Falha no pré-aquecimento do FinBERT ⚠️")
+    except Exception as e:
+        logger.error(f"[Warmup] Erro inesperado: {e}")
+
+
+# ----------------------------------------------------------
+# STARTUP: warmup automático (#14)
+# ----------------------------------------------------------
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Se WARMUP_ON_STARTUP=true no .env, pré-aquece o FinBERT em background
+    logo após o servidor subir. Evita latência na primeira requisição real.
+    Defina no .env: WARMUP_ON_STARTUP=true
+    """
+    if os.getenv("WARMUP_ON_STARTUP", "false").lower() == "true":
+        logger.info("[Startup] WARMUP_ON_STARTUP=true — disparando warmup do FinBERT...")
+        t = threading.Thread(target=_warmup_finbert_background, daemon=True)
+        t.start()
+    else:
+        logger.info("[Startup] Warmup automático desativado (WARMUP_ON_STARTUP != true).")
+
+
 # ----------------------------------------------------------
 # SCHEMAS
 # ----------------------------------------------------------
@@ -137,7 +178,8 @@ def root():
 
 @app.get("/status", tags=["Bot"])
 def get_status():
-    """Status completo do bot."""
+    """Status completo do bot, incluindo estado do modelo FinBERT."""
+    finbert_loaded = _get_sentiment_analyzer().is_model_loaded
     if _bot is None:
         return {
             "running": False,
@@ -148,6 +190,7 @@ def get_status():
             "trades_today": 0,
             "total_trades": 0,
             "open_trade": None,
+            "finbert_loaded": finbert_loaded,
         }
     s = _bot.risk.status()
     ot = _bot.risk._open_trade
@@ -163,6 +206,7 @@ def get_status():
         "trades_today": s["trades_today"],
         "total_trades": s["total_trades"],
         "consecutive_losses": s.get("consecutive_losses", 0),
+        "finbert_loaded": finbert_loaded,
         "open_trade": {
             "id": ot.id,
             "direction": ot.direction,
@@ -171,6 +215,25 @@ def get_status():
             "take_profit": ot.take_profit,
             "opened_at": str(ot.opened_at),
         } if ot else None,
+    }
+
+
+@app.get("/warmup", tags=["Health"])
+def warmup_model():
+    """
+    Pré-aquece o modelo FinBERT em background (#14).
+    Retorna imediatamente — o carregamento acontece em thread separada.
+    Use GET /status para monitorar `finbert_loaded`.
+    """
+    analyzer = _get_sentiment_analyzer()
+    if analyzer.is_model_loaded:
+        return {"status": "already_loaded", "finbert_loaded": True}
+    t = threading.Thread(target=_warmup_finbert_background, daemon=True)
+    t.start()
+    return {
+        "status": "warming_up",
+        "message": "FinBERT carregando em background. Verifique GET /status → `finbert_loaded`.",
+        "finbert_loaded": False,
     }
 
 
@@ -226,9 +289,7 @@ def get_trades_history(
 ):
     """
     Histórico completo de trades persistidos no Supabase.
-
-    Retorna array direto (não { trades, total }) para
-    compatibilidade com o dashboard frontend.
+    Retorna array direto para compatibilidade com o dashboard.
     """
     db = _get_db()
     if db is None:
@@ -307,7 +368,7 @@ def start_bot(
     config: BotConfig,
     _: None = Depends(verify_token),
 ):
-    """Inicia o loop do bot em background. Requer Bearer token se API_TOKEN estiver no .env."""
+    """Inicia o loop do bot em background."""
     global _bot, _bot_thread
     if _bot and _bot._running:
         return {"status": "already_running", "symbol": _bot.symbol}
@@ -326,7 +387,7 @@ def start_bot(
 
 @app.post("/bot/stop", tags=["Bot"])
 def stop_bot(_: None = Depends(verify_token)):
-    """Para o loop do bot. Requer Bearer token se API_TOKEN estiver no .env."""
+    """Para o loop do bot."""
     if _bot is None or not _bot._running:
         return {"status": "not_running"}
     _bot.stop()
@@ -335,7 +396,7 @@ def stop_bot(_: None = Depends(verify_token)):
 
 @app.post("/bot/resume", tags=["Bot"])
 def resume_bot(_: None = Depends(verify_token)):
-    """Retoma o bot após pausa por drawdown. Requer Bearer token se API_TOKEN estiver no .env."""
+    """Retoma o bot após pausa por drawdown."""
     if _bot is None:
         return {"status": "no_bot"}
     _bot.risk.resume()

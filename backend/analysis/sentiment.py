@@ -4,10 +4,11 @@ Classifica notícias financeiras com FinBERT (ProsusAI/finbert).
 Retorna: positive | negative | neutral + score de confiança
 
 Arquitetura:
-    - Pipeline FinBERT carregado uma única vez na inicialização (lazy loading)
-    - Analisa lista de manchetes e retorna score agregado
-    - Cache simples em memória para evitar reprocessamento
-    - Integração com NewsClient (CryptoPanic + RSS fallback) via get_news_sentiment()
+    - Pipeline FinBERT lazy: carregado na primeira análise real, não no __init__
+    - threading.Lock garante que só uma thread carrega o modelo (safe para ASGI)
+    - Singleton global _FINBERT_PIPELINE: compartilhado entre instâncias (#14)
+    - Cache em memória por instância (TTL configurável, padrão: 300s)
+    - Integração com NewsClient (CryptoPanic + RSS fallback)
 
 Diagnóstico robusto (#5):
     - Loga o raw output do FinBERT antes de qualquer pós-processamento
@@ -15,6 +16,11 @@ Diagnóstico robusto (#5):
     - Campo `source` em SentimentResult indica de onde veio o resultado:
         'finbert' | 'cache' | 'fallback_no_news' | 'fallback_newsapi_error' |
         'fallback_finbert_error' | 'fallback_empty_texts'
+
+Pré-aquecimento (#14):
+    - warmup() carrega o modelo explicitamente (para deploy / cold start)
+    - is_model_loaded: True após primeira carga bem-sucedida
+    - Endpoint GET /warmup na API aciona warmup em background thread
 
 Uso:
     analyzer = SentimentAnalyzer()
@@ -26,6 +32,7 @@ Uso:
 """
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -37,6 +44,14 @@ logger = logging.getLogger(__name__)
 
 _FALLBACK_SCORE = 0.5
 _FALLBACK_SCORE_TOLERANCE = 1e-9
+
+# -------------------------------------------------------------------
+# Singleton global thread-safe para o pipeline FinBERT (#14)
+# Compartilhado entre todas as instâncias de SentimentAnalyzer para
+# evitar carregar o modelo (~440 MB) mais de uma vez por processo.
+# -------------------------------------------------------------------
+_FINBERT_PIPELINE = None
+_FINBERT_LOCK = threading.Lock()
 
 
 def _is_suspicious_score(score: float) -> bool:
@@ -81,39 +96,93 @@ class SentimentAnalyzer:
         self.min_confidence = min_confidence
         self.max_headlines = max_headlines
         self.cache_ttl = cache_ttl
-        self._pipeline = None
         self._cache: dict[str, tuple[SentimentResult, float]] = {}
-
-        # NewsClient lazy (instanciado na primeira chamada)
         self._news_client = None
 
+    # ----------------------------------------------------------
+    # Propriedades públicas (#14)
+    # ----------------------------------------------------------
+
+    @property
+    def is_model_loaded(self) -> bool:
+        """True se o pipeline FinBERT já foi carregado neste processo."""
+        return _FINBERT_PIPELINE is not None
+
+    def warmup(self) -> bool:
+        """
+        Pré-aquece o modelo FinBERT explicitamente.
+        Útil para deploy — evita timeout na primeira requisição real.
+
+        Returns:
+            True se o modelo foi carregado com sucesso, False se houve erro.
+        """
+        if self.is_model_loaded:
+            logger.info("[FinBERT] Modelo já carregado. Warmup ignorado.")
+            return True
+        try:
+            self._load_model()
+            return True
+        except Exception as e:
+            logger.error(f"[FinBERT] Warmup falhou: {e}")
+            return False
+
+    # ----------------------------------------------------------
+    # NewsClient lazy
+    # ----------------------------------------------------------
+
     def _get_news_client(self):
-        """Retorna o NewsClient, instanciando na primeira chamada."""
         if self._news_client is None:
             from backend.market.news_client import NewsClient
             self._news_client = NewsClient()
         return self._news_client
 
+    # ----------------------------------------------------------
+    # Lazy loading thread-safe (#14)
+    # ----------------------------------------------------------
+
     def _load_model(self):
-        """Carrega o pipeline FinBERT na primeira chamada (lazy loading)."""
-        if self._pipeline is not None:
-            return
-        logger.info(f"Carregando modelo FinBERT: {self.model_name} (~440MB, pode demorar...)")
-        try:
-            from transformers import pipeline
-            self._pipeline = pipeline(
-                task="text-classification",
-                model=self.model_name,
-                tokenizer=self.model_name,
-                device=-1,
-                truncation=True,
-                max_length=512,
-                top_k=None,
+        """
+        Carrega o pipeline FinBERT na primeira chamada (lazy loading).
+
+        Thread-safe via double-checked locking:
+        - Verifica sem trava (fast path)
+        - Adquire _FINBERT_LOCK
+        - Verifica novamente dentro da trava (evita double-load)
+        """
+        global _FINBERT_PIPELINE
+
+        if _FINBERT_PIPELINE is not None:
+            return  # fast path
+
+        with _FINBERT_LOCK:
+            if _FINBERT_PIPELINE is not None:
+                return  # outra thread carregou enquanto esperávamos
+
+            logger.info(
+                f"[FinBERT] Carregando modelo: {self.model_name} "
+                "(~440 MB, pode demorar na primeira vez...)"
             )
-            logger.info("FinBERT carregado com sucesso.")
-        except Exception as e:
-            logger.error(f"[FinBERT] Falha ao carregar modelo '{self.model_name}': {e}")
-            raise
+            t0 = time.time()
+            try:
+                from transformers import pipeline
+                _FINBERT_PIPELINE = pipeline(
+                    task="text-classification",
+                    model=self.model_name,
+                    tokenizer=self.model_name,
+                    device=-1,
+                    truncation=True,
+                    max_length=512,
+                    top_k=None,
+                )
+                elapsed = time.time() - t0
+                logger.info(f"[FinBERT] Modelo carregado em {elapsed:.1f}s ✅")
+            except Exception as e:
+                logger.error(f"[FinBERT] Falha ao carregar modelo '{self.model_name}': {e}")
+                raise
+
+    # ----------------------------------------------------------
+    # Análise principal
+    # ----------------------------------------------------------
 
     def analyze_news(self, news_list: list[dict]) -> SentimentResult:
         """Analisa lista de notícias e retorna sentiment agregado."""
@@ -157,7 +226,7 @@ class SentimentAnalyzer:
 
         for text in texts:
             try:
-                raw_output = self._pipeline(text)
+                raw_output = _FINBERT_PIPELINE(text)
                 if raw_output and isinstance(raw_output[0], list):
                     raw_output = raw_output[0]
                 raw_dict = {r["label"].lower(): round(r["score"], 4) for r in raw_output}
@@ -231,17 +300,11 @@ class SentimentAnalyzer:
         self,
         keyword: str = "bitcoin",
         news_limit: int = 10,
-        # alias de compatibilidade (era page_size na NewsAPI)
         page_size: Optional[int] = None,
     ) -> SentimentResult:
         """
         Busca notícias via NewsClient (CryptoPanic + RSS fallback)
         e retorna o sentiment classificado pelo FinBERT.
-
-        Args:
-            keyword:    Palavra-chave (ex: 'bitcoin', 'bnb')
-            news_limit: Máximo de notícias a buscar (padrão: 10)
-            page_size:  Alias legado de news_limit (ignorado se news_limit for fornecido)
         """
         limit = news_limit if page_size is None else page_size
         try:
@@ -250,8 +313,7 @@ class SentimentAnalyzer:
 
             if not news_list:
                 logger.warning(
-                    f"[Sentiment] NewsClient não retornou notícias para '{keyword}' "
-                    "(CryptoPanic e RSS indisponíveis ou sem resultados)"
+                    f"[Sentiment] NewsClient não retornou notícias para '{keyword}'"
                 )
                 return SentimentResult(
                     signal="neutral", score=0.0, news_count=0,
@@ -259,21 +321,20 @@ class SentimentAnalyzer:
                     reason="Nenhuma notícia disponível (NewsClient vazio)"
                 )
 
-            logger.info(
-                f"[Sentiment] {len(news_list)} notícias obtidas para '{keyword}' "
-                f"via NewsClient"
-            )
+            logger.info(f"[Sentiment] {len(news_list)} notícias obtidas para '{keyword}'")
             return self.analyze_news(news_list)
 
         except Exception as e:
-            logger.warning(
-                f"[Sentiment] Erro no NewsClient para '{keyword}': {e} — usando neutral"
-            )
+            logger.warning(f"[Sentiment] Erro no NewsClient para '{keyword}': {e} — usando neutral")
             return SentimentResult(
                 signal="neutral", score=0.0,
                 source="fallback_newsapi_error",
                 reason=f"Exceção no NewsClient: {e}"
             )
+
+    # ----------------------------------------------------------
+    # Cache interno (por instância)
+    # ----------------------------------------------------------
 
     def _get_cache(self, key: str) -> Optional[SentimentResult]:
         if key in self._cache:
