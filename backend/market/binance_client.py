@@ -4,10 +4,21 @@ Conexão com a Binance (testnet ou real) via python-binance.
 
 Funcionalidades:
     - Conexão automática testnet/real via .env
-    - get_candles()              — últimos N candles (testnet/real)
+    - ping()                     — valida conexão rapidamente
+    - get_candles()              — últimos N candles
     - get_historical_candles()   — histórico para backtest (sempre API real)
     - get_price()                — preço atual
     - get_account_balance()      — saldo da conta
+
+Modo testnet:
+    BINANCE_TESTNET=true  — usa testnet.binance.vision (sandbox com USDT virtual)
+    BINANCE_TESTNET=false — usa api.binance.com (real)
+
+Obtendo keys testnet:
+    1. Acesse https://testnet.binance.vision
+    2. Login com GitHub
+    3. Gere API Key em "API Management"
+    4. Coloque no .env: BINANCE_API_KEY, BINANCE_SECRET, BINANCE_TESTNET=true
 """
 
 import os
@@ -23,34 +34,54 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Testnet tem poucos klines próprios — usamos o cliente público para candles
+_TESTNET_BASE_URL = "https://testnet.binance.vision"
+
 
 class BinanceClient:
     """
     Wrapper do python-binance com suporte a testnet e real.
-    Configuração via variáveis de ambiente:
+
+    Variáveis de ambiente:
         BINANCE_API_KEY    — API Key
         BINANCE_SECRET     — Secret Key
-        BINANCE_TESTNET    — 'true' para testnet, 'false' para real
+        BINANCE_TESTNET    — 'true' para sandbox, 'false' para real (default: true)
     """
 
     def __init__(self):
-        api_key = os.getenv("BINANCE_API_KEY")
+        api_key    = os.getenv("BINANCE_API_KEY")
         api_secret = os.getenv("BINANCE_SECRET")
         self.testnet = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
 
         if not api_key or not api_secret:
-            raise ValueError("BINANCE_API_KEY e BINANCE_SECRET devem estar no .env")
+            raise ValueError(
+                "BINANCE_API_KEY e BINANCE_SECRET devem estar no .env\n"
+                "Testnet: https://testnet.binance.vision (login com GitHub)"
+            )
 
         self.client = Client(api_key, api_secret, testnet=self.testnet)
-        mode = "TESTNET" if self.testnet else "REAL"
-        logger.info(f"BinanceClient inicializado [{mode}]")
+        mode = "TESTNET (🧪 sandbox)" if self.testnet else "REAL (💸 dinheiro real!)"
+        base = _TESTNET_BASE_URL if self.testnet else "https://api.binance.com"
+        logger.info(f"BinanceClient inicializado [{mode}] — {base}")
 
-        # Cliente público (sem testnet) para dados históricos reais
+        # Cliente público para candles históricos reais (testnet não tem histórico)
         self._public_client = Client("", "")
 
     # ----------------------------------------------------------
-    # STATUS
+    # PING / STATUS
     # ----------------------------------------------------------
+
+    def ping(self) -> bool:
+        """
+        Testa conectividade com a Binance. Retorna True se ok.
+        Usado pelo smoke test e health check.
+        """
+        try:
+            self.client.ping()
+            return True
+        except Exception as e:
+            logger.error(f"Binance ping falhou: {e}")
+            return False
 
     def is_online(self) -> bool:
         try:
@@ -65,65 +96,67 @@ class BinanceClient:
     # ----------------------------------------------------------
 
     def get_price(self, symbol: str = "BTCUSDT") -> Optional[float]:
+        """
+        Preço atual do par.
+        Testnet retorna preços próximos do real (espelhado).
+        """
         try:
-            ticker = self.client.get_symbol_ticker(symbol=symbol)
+            # Usa cliente público para preço mais confiável no testnet
+            ticker = self._public_client.get_symbol_ticker(symbol=symbol)
             return float(ticker["price"])
         except BinanceAPIException as e:
             logger.error(f"Erro ao buscar preço de {symbol}: {e}")
             return None
 
     # ----------------------------------------------------------
-    # CANDLES EM TEMPO REAL (testnet/real)
+    # CANDLES EM TEMPO REAL
     # ----------------------------------------------------------
 
-    def get_candles(self, symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100) -> pd.DataFrame:
+    def get_candles(
+        self,
+        symbol:   str = "BTCUSDT",
+        interval: str = "5m",
+        limit:    int = 100,
+    ) -> pd.DataFrame:
         """
-        Retorna os últimos N candles do servidor configurado (testnet ou real).
+        Retorna os últimos N candles.
+
+        Estratégia:
+          - Testnet  → usa cliente público (testnet klines são esparsos)
+          - Real     → usa cliente autenticado
         """
         try:
-            raw = self.client.get_klines(symbol=symbol, interval=interval, limit=limit)
+            client = self._public_client if self.testnet else self.client
+            raw = client.get_klines(symbol=symbol, interval=interval, limit=limit)
             return self._parse_candles(raw)
         except BinanceAPIException as e:
             logger.error(f"Erro ao buscar candles de {symbol}: {e}")
             return pd.DataFrame()
 
     # ----------------------------------------------------------
-    # CANDLES HISTÓRICOS (sempre API real — testnet não tem histórico)
+    # CANDLES HISTÓRICOS (sempre API real)
     # ----------------------------------------------------------
 
     def get_historical_candles(
         self,
-        symbol: str = "BTCUSDT",
-        interval: str = "5m",
-        start: str = "3 months ago UTC",
-        end: Optional[str] = None,
+        symbol:   str            = "BTCUSDT",
+        interval: str            = "5m",
+        start:    str            = "3 months ago UTC",
+        end:      Optional[str]  = None,
     ) -> pd.DataFrame:
         """
-        Retorna candles históricos da API pública da Binance (dados reais).
-        Usa o cliente público independente do modo testnet/real configurado,
-        pois o testnet não possui dados históricos confiáveis.
-
-        Args:
-            symbol:   Par de trading (ex: 'BTCUSDT')
-            interval: Timeframe (ex: '5m', '1h')
-            start:    Data de início (ex: '2026-01-01' ou '3 months ago UTC')
-            end:      Data de fim (padrão: agora)
-
-        Returns:
-            DataFrame com colunas: open_time, open, high, low, close, volume
+        Candles históricos da API pública Binance (dados reais).
+        Independe do modo testnet — testnet não tem histórico confiável.
         """
         try:
-            logger.info(f"Buscando candles históricos (API real): {symbol} {interval} desde '{start}'...")
+            logger.info(f"Buscando histórico: {symbol} {interval} desde '{start}'...")
             raw = self._public_client.get_historical_klines(
-                symbol=symbol,
-                interval=interval,
-                start_str=start,
-                end_str=end,
+                symbol=symbol, interval=interval,
+                start_str=start, end_str=end,
             )
             df = self._parse_candles(raw)
-            if df.empty:
-                return df
-            logger.info(f"  {len(df)} candles recebidos ({df['open_time'].iloc[0].date()} → {df['open_time'].iloc[-1].date()})")
+            if not df.empty:
+                logger.info(f"  {len(df)} candles ({df['open_time'].iloc[0].date()} → {df['open_time'].iloc[-1].date()})")
             return df
         except BinanceAPIException as e:
             logger.error(f"Erro ao buscar histórico de {symbol}: {e}")
@@ -134,6 +167,10 @@ class BinanceClient:
     # ----------------------------------------------------------
 
     def get_account_balance(self, asset: str = "USDT") -> Optional[float]:
+        """
+        Saldo disponível do ativo na conta (testnet ou real).
+        Testnet dá ~10.000 USDT virtual por padrão.
+        """
         try:
             account = self.client.get_account()
             for balance in account["balances"]:
@@ -158,10 +195,8 @@ class BinanceClient:
             "close_time", "quote_volume", "trades",
             "taker_buy_base", "taker_buy_quote", "ignore"
         ])
-
-        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
+        df["open_time"]  = pd.to_datetime(df["open_time"],  unit="ms")
         df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
-
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = df[col].astype(float)
 
@@ -170,16 +205,11 @@ class BinanceClient:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-
     bc = BinanceClient()
-    print(f"\nOnline: {bc.is_online()}")
-    print(f"Preço BTC: ${bc.get_price('BTCUSDT'):,.2f}")
-    print(f"Saldo USDT: ${bc.get_account_balance('USDT'):,.2f}")
-
+    print(f"\nPing:        {bc.ping()}")
+    print(f"Online:      {bc.is_online()}")
+    print(f"Preço BTC:   ${bc.get_price('BTCUSDT'):,.2f}")
+    print(f"Saldo USDT:  ${bc.get_account_balance('USDT'):,.2f}")
     df = bc.get_candles(symbol="BTCUSDT", interval="5m", limit=5)
-    print(f"\nÚltimos 5 candles BTCUSDT 5m (testnet):")
+    print(f"\nÚltimos 5 candles BTCUSDT 5m:")
     print(df.to_string(index=False))
-
-    df2 = bc.get_historical_candles(symbol="BTCUSDT", interval="1h", start="3 days ago UTC")
-    print(f"\nÚltimos 3 dias BTCUSDT 1h (API real): {len(df2)} candles")
-    print(df2.tail(3).to_string(index=False))
