@@ -112,9 +112,10 @@
   <span style="font-size:1.5rem">🤖</span>
   <h1>Roboto Dashboard</h1>
   <span id="status-badge" class="badge offline">Carregando...</span>
-  <a href="/" class="nav-link active">Dashboard</a>
-  <a href="/reports" class="nav-link">📊 Relatórios</a>
-  <a href="/control" class="nav-link">⚙️ Controle</a>
+  <a href="/dashboard/"             class="nav-link active">Dashboard</a>
+  <a href="/dashboard/reports.html" class="nav-link">📊 Relatórios</a>
+  <a href="/dashboard/control.html" class="nav-link">⚙️ Controle</a>
+  <a href="/dashboard/backtest.html" class="nav-link">🧠 Backtest</a>
 </header>
 
 <!-- Health Bar (#31) -->
@@ -172,7 +173,7 @@
 <div id="toast"></div>
 
 <script>
-  const API = (window.API_URL || 'https://roboto-tau3.onrender.com').replace(/\/$/, '');
+  const API = (window.API_URL || 'http://localhost:8000').replace(/\/$/, '');
   let timer = 30;
   let apiOffline = false;
 
@@ -277,8 +278,8 @@
           <td><span class="tag ${t.direction}_${t.strength}">${t.direction} ${t.strength}</span></td>
           <td>$${fmt(t.entry_price)}</td>
           <td>${t.exit_price?'$'+fmt(t.exit_price):'—'}</td>
-          <td class="${t.pnl_pct>0?'green':t.pnl_pct<0?'red':''}">" +
-            "${t.pnl_pct!=null?fmt(t.pnl_pct)+'%':'—'}</td>
+          <td class="${t.pnl_pct>0?'green':t.pnl_pct<0?'red':''}">` +
+          `${t.pnl_pct!=null?fmt(t.pnl_pct)+'%':'—'}</td>
           <td><span class="tag ${t.result}">${t.result??'OPEN'}</span></td>
           <td>${fmtDate(t.closed_at)}</td>
         </tr>`).join('');
