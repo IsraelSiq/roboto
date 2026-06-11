@@ -1,0 +1,75 @@
+# ============================================================
+# Keep-Alive — Render Free Tier
+#
+# Pinga o backend a cada 10 minutos para evitar hibernacao.
+# O Render free tier hiberna apos 15 min sem requests.
+#
+# Se voce migrar para um plano pago, pode deletar este workflow
+# ou apenas desativa-lo em Actions > keep-alive > Disable.
+# ============================================================
+
+name: Keep-Alive (Render)
+
+on:
+  schedule:
+    # A cada 10 minutos, 24h por dia
+    - cron: '*/10 * * * *'
+
+  # Tambem roda apos deploy para garantir que o backend acordou
+  workflow_run:
+    workflows: ["Deploy Backend"]
+    types: [completed]
+
+  # Permite rodar manualmente pelo painel do GitHub
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping Render
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Ping /health
+        id: ping
+        continue-on-error: true
+        run: |
+          echo "Pingando https://roboto-tau3.onrender.com/health ..."
+          STATUS=$(curl -s -o /tmp/health.json -w "%{http_code}" \
+            --max-time 25 \
+            https://roboto-tau3.onrender.com/health)
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "HTTP $STATUS"
+          cat /tmp/health.json || true
+
+      - name: Checar /metrics/health (uptime)
+        continue-on-error: true
+        run: |
+          RESP=$(curl -s --max-time 10 \
+            https://roboto-tau3.onrender.com/metrics/health || echo '{}')
+          echo "$RESP" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    status  = d.get('status', '?')
+    uptime  = d.get('uptime_s', '?')
+    version = d.get('version', '?')
+    deps    = d.get('dependencies', {})
+    binance  = '✅' if deps.get('binance',  {}).get('ok') else '❌'
+    supabase = '✅' if deps.get('supabase', {}).get('ok') else '❌'
+    finbert  = '✅' if deps.get('finbert',  {}).get('loaded') else '⏳'
+    lat_b = deps.get('binance', {}).get('latency_ms', '-')
+    print(f'status={status} uptime={uptime}s v{version}')
+    print(f'  Binance {binance} {lat_b}ms | Supabase {supabase} | FinBERT {finbert}')
+except Exception as e:
+    print(f'parse error: {e}')
+" || true
+
+      - name: Resultado
+        run: |
+          CODE="${{ steps.ping.outputs.status }}"
+          if [ "$CODE" = "200" ]; then
+            echo "✅ Backend acordado (HTTP 200)"
+          else
+            echo "⚠️ Backend retornou HTTP $CODE (pode estar acordando)"
+          fi
