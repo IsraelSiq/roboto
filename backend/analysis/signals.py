@@ -21,16 +21,14 @@ Log detalhado (#9):
         sentiment_raw       → raw scores do FinBERT {positive, negative, neutral}
         sentiment_source    → origem do sentiment ('finbert'|'cache'|'fallback_*')
         sentiment_reason    → motivo detalhado do sentiment
-    - WARNING emitido quando sentiment_source começa com 'fallback'
-    - WARNING emitido quando sentiment_score é suspeito (== 0.50 exato)
+        atr                 → ATR(14) propagado de TechnicalResult (#7)
 
 Uso:
     from backend.analysis.signals import SignalCombiner
     combiner = SignalCombiner()
     decision = combiner.combine(technical_result, sentiment_result)
     print(decision.final)           # CALL_FORTE | PUT_FORTE | CALL_FRACO | PUT_FRACO | AGUARDAR
-    print(decision.sentiment_raw)   # {'positive': 0.82, 'negative': 0.10, 'neutral': 0.08}
-    print(decision.sentiment_source)  # 'finbert' | 'fallback_newsapi_error' | ...
+    print(decision.atr)             # ATR(14) do último candle (ou None)
 """
 
 import logging
@@ -79,7 +77,10 @@ class SignalDecision:
     sentiment_score: Optional[float] = None
     news_count: int = 0
 
-    # --- Campos novos para diagnóstico (#9 + #5) ---
+    # ATR propagado de TechnicalResult (#7)
+    atr: Optional[float] = None
+
+    # --- Campos para diagnóstico (#9 + #5) ---
     sentiment_raw: dict = field(default_factory=dict)
     sentiment_source: str = "finbert"
     sentiment_reason: str = ""
@@ -118,12 +119,14 @@ class SignalDecision:
             AGUARDAR: "⏸️  AGUARDAR",
         }
         score_str = f"{self.sentiment_score:.2f}" if self.sentiment_score is not None else "N/A"
+        atr_str = f" | ATR: {self.atr:.2f}" if self.atr is not None else ""
         return (
             f"{emoji.get(self.final, self.final)} | "
             f"Preço: ${self.current_price:,.2f} | "
             f"RSI: {self.rsi} | "
             f"Sentiment: {self.sentiment_signal} ({score_str}) | "
             f"Confiança: {self.confidence:.0%}"
+            f"{atr_str}"
         )
 
     def debug_breakdown(self) -> str:
@@ -139,6 +142,7 @@ class SignalDecision:
         lines = [
             f"┌─ SignalCombiner Breakdown ── {self.symbol} {self.timeframe} ──────────────────",
             f"│  Preço atual    : ${self.current_price:,.2f}",
+            f"│  ATR(14)        : {self.atr}",
             f"│  RSI(14)        : {self.rsi}",
             f"│  EMA50          : {self.ema50}",
             f"│  MACD           : {self.macd} | Signal: {self.macd_signal}",
@@ -222,6 +226,7 @@ class SignalCombiner:
             ema50=technical.ema50,
             bb_upper=technical.bb_upper,
             bb_lower=technical.bb_lower,
+            atr=technical.atr,          # ← propagado (#7)
             current_price=technical.current_price,
             sentiment_score=sentiment.score,
             news_count=sentiment.news_count,
@@ -257,9 +262,7 @@ class SignalCombiner:
 
 
 if __name__ == "__main__":
-    import logging
     import sys
-    import os
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
     logging.basicConfig(level=logging.DEBUG)
 
@@ -275,7 +278,7 @@ if __name__ == "__main__":
     tech = tech_analyzer.analyze(df)
     sent_analyzer = SentimentAnalyzer(min_confidence=0.6)
     keyword = SYMBOL_KEYWORDS.get(SYMBOL, "bitcoin")
-    sent = sent_analyzer.get_news_sentiment(keyword=keyword, page_size=5)
+    sent = sent_analyzer.get_news_sentiment(keyword=keyword, news_limit=5)
     combiner = SignalCombiner(symbol=SYMBOL, timeframe="5m")
     decision = combiner.combine(tech, sent)
     print(f"\n{decision.debug_breakdown()}")

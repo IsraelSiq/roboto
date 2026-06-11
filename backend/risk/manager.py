@@ -3,19 +3,22 @@ Roboto — Risk Manager
 Controla stop loss, take profit, max trades/dia, drawdown máximo e circuit breaker.
 
 Regras de proteção:
-    - Stop loss por trade:       5% (padrão) OU ATR dinâmico
-    - Take profit por trade:     10% (padrão)
+    - Stop loss por trade:       ATR dinâmico (padrão) OU % fixo (fallback)
+    - Take profit por trade:     ATR dinâmico com R:R >= rr_ratio OU % fixo (fallback)
     - Max trades por dia:        10 (padrão)
     - Drawdown máximo:           20% (pausa automática)
     - Circuit breaker:           3 perdas consecutivas (pausa automática)
     - Só opera sinais FORTES por padrão
 
 Issue #7:
-    - Stop loss pode usar ATR (Average True Range) quando disponível.
-    - Fórmula:
-        CALL -> stop_loss = entry_price - (atr * atr_multiplier)
-        PUT  -> stop_loss = entry_price + (atr * atr_multiplier)
-    - Se ATR não estiver disponível, cai para o SL percentual atual.
+    - SL adaptativo por ATR ativado por padrão (use_atr_stop=True)
+    - Fórmulas:
+        CALL -> SL = entry - (ATR * atr_multiplier)
+               TP = entry + (ATR * atr_multiplier * rr_ratio)
+        PUT  -> SL = entry + (ATR * atr_multiplier)
+               TP = entry - (ATR * atr_multiplier * rr_ratio)
+    - Se ATR não estiver disponível, cai automaticamente para SL/TP percentual.
+    - R:R mínimo garantido: rr_ratio (padrão 2.0) quando ATR ativo.
 """
 
 import logging
@@ -64,13 +67,14 @@ class RiskManager:
 
     Args:
         balance:                 Saldo inicial em USDT
-        stop_loss_pct:           Stop loss em % (padrão: 5.0)
-        take_profit_pct:         Take profit em % (padrão: 10.0)
+        stop_loss_pct:           Stop loss em % (fallback quando ATR indisponível; padrão: 5.0)
+        take_profit_pct:         Take profit em % (fallback quando ATR indisponível; padrão: 10.0)
         max_trades_day:          Máx trades por dia (padrão: 10)
         max_drawdown_pct:        Drawdown máximo antes de pausar (padrão: 20.0)
         only_strong:             Só opera sinais FORTES (padrão: True)
-        use_atr_stop:            Quando True, usa ATR para o stop loss se disponível
-        atr_multiplier:          Multiplicador do ATR para calcular distância do stop
+        use_atr_stop:            Quando True, usa ATR para o stop loss se disponível (padrão: True)
+        atr_multiplier:          Multiplicador do ATR para calcular distância do stop (padrão: 1.5)
+        rr_ratio:                Razão Risco:Recompensa mínima para TP (padrão: 2.0)
         max_consecutive_losses:  Circuit breaker: pausa após N perdas seguidas (padrão: 3)
     """
 
@@ -82,8 +86,9 @@ class RiskManager:
         max_trades_day: int = 10,
         max_drawdown_pct: float = 20.0,
         only_strong: bool = True,
-        use_atr_stop: bool = False,
-        atr_multiplier: float = 2.0,
+        use_atr_stop: bool = True,      # ativado por padrão (#7)
+        atr_multiplier: float = 1.5,    # 1.5x ATR = mais espaço que o SL fixo de 0.8%
+        rr_ratio: float = 2.0,          # TP = 2x o risco (R:R 2:1)
         max_consecutive_losses: int = 3,
     ):
         self.initial_balance = balance
@@ -96,6 +101,7 @@ class RiskManager:
         self.only_strong = only_strong
         self.use_atr_stop = use_atr_stop
         self.atr_multiplier = atr_multiplier
+        self.rr_ratio = rr_ratio
         self.max_consecutive_losses = max_consecutive_losses
 
         self._paused = False
@@ -143,10 +149,10 @@ class RiskManager:
 
         price = decision.current_price
         direction = decision.direction()
-        atr_value = getattr(decision, "atr", None)
+        atr_value = decision.atr  # propagado de TechnicalResult (#7)
 
         sl, sl_mode = self._calc_stop_loss(price=price, direction=direction, atr_value=atr_value)
-        tp = self._calc_take_profit(price=price, direction=direction)
+        tp = self._calc_take_profit(price=price, direction=direction, sl=sl, sl_mode=sl_mode)
 
         trade = Trade(
             id=str(uuid4())[:8],
@@ -166,10 +172,16 @@ class RiskManager:
         self._trades.append(trade)
         self._today_count += 1
 
-        atr_note = f" | ATR={atr_value} x {self.atr_multiplier}" if sl_mode == "atr" else ""
+        risco = abs(price - sl)
+        retorno = abs(tp - price)
+        rr_real = round(retorno / risco, 2) if risco > 0 else 0
+        atr_note = (
+            f" | ATR={atr_value:.2f} x {self.atr_multiplier} | R:R={rr_real}"
+            if sl_mode == "atr" else f" | R:R={rr_real}"
+        )
         logger.info(
             f"[Trade ABERTO] {direction} {decision.symbol} @ ${price:,.2f} "
-            f"| SL=${sl:,.2f} ({sl_mode}) | TP=${tp:,.2f} | ID={trade.id}{atr_note}"
+            f"| SL=${sl:,.2f} ({sl_mode}) | TP=${tp:,.2f}{atr_note} | ID={trade.id}"
         )
         return trade
 
@@ -252,6 +264,9 @@ class RiskManager:
             "total_trades": len(self._trades),
             "consecutive_losses": self._consecutive_losses,
             "max_consecutive_losses": self.max_consecutive_losses,
+            "sl_mode": "atr" if self.use_atr_stop else "pct",
+            "atr_multiplier": self.atr_multiplier,
+            "rr_ratio": self.rr_ratio,
         }
 
     def _pause(self, reason: str):
@@ -270,18 +285,37 @@ class RiskManager:
             self._today_date = today
             self._today_count = 0
 
-    def _calc_stop_loss(self, price: float, direction: str, atr_value: Optional[float]) -> tuple[float, str]:
+    def _calc_stop_loss(
+        self, price: float, direction: str, atr_value: Optional[float]
+    ) -> tuple[float, str]:
+        """Calcula SL adaptativo por ATR ou percentual (fallback)."""
         if self.use_atr_stop and atr_value is not None and atr_value > 0:
             distance = atr_value * self.atr_multiplier
             if direction == "CALL":
                 return round(price - distance, 2), "atr"
             return round(price + distance, 2), "atr"
 
+        # Fallback percentual
         if direction == "CALL":
             return round(price * (1 - self.stop_loss_pct / 100), 2), "pct"
         return round(price * (1 + self.stop_loss_pct / 100), 2), "pct"
 
-    def _calc_take_profit(self, price: float, direction: str) -> float:
+    def _calc_take_profit(
+        self, price: float, direction: str, sl: float, sl_mode: str
+    ) -> float:
+        """
+        Calcula TP proporcional ao risco real (R:R >= rr_ratio).
+        Quando sl_mode='atr': TP = entry ± |entry - SL| * rr_ratio
+        Quando sl_mode='pct': TP = entry ± take_profit_pct% (comportamento original)
+        """
+        if sl_mode == "atr":
+            risk = abs(price - sl)
+            reward = risk * self.rr_ratio
+            if direction == "CALL":
+                return round(price + reward, 2)
+            return round(price - reward, 2)
+
+        # Fallback percentual
         if direction == "CALL":
             return round(price * (1 + self.take_profit_pct / 100), 2)
         return round(price * (1 - self.take_profit_pct / 100), 2)

@@ -9,6 +9,7 @@ Uso:
     python -m backend.core.bot
     python -m backend.core.bot --symbol ETHUSDT --interval 1m --cycles 5
     python -m backend.core.bot --max-losses 5
+    python -m backend.core.bot --atr-mult 2.0 --rr 2.5
 """
 
 import argparse
@@ -52,6 +53,9 @@ class RobotoBot:
         use_db:                 Persiste dados no Supabase (padrão: True)
         max_consecutive_losses: Circuit breaker: pausa após N perdas seguidas (padrão: 3)
         news_limit:             Qtd de notícias para buscar por ciclo (padrão: 5)
+        use_atr_stop:           Usa SL adaptativo por ATR (padrão: True)
+        atr_multiplier:         Multiplicador do ATR para o SL (padrão: 1.5)
+        rr_ratio:               Razão Risco:Recompensa para TP (padrão: 2.0)
     """
 
     def __init__(
@@ -66,6 +70,9 @@ class RobotoBot:
         use_db: bool = True,
         max_consecutive_losses: int = 3,
         news_limit: int = 5,
+        use_atr_stop: bool = True,
+        atr_multiplier: float = 1.5,
+        rr_ratio: float = 2.0,
     ):
         self.symbol = symbol
         self.interval = interval
@@ -83,6 +90,9 @@ class RobotoBot:
             balance=balance,
             only_strong=only_strong,
             max_consecutive_losses=max_consecutive_losses,
+            use_atr_stop=use_atr_stop,
+            atr_multiplier=atr_multiplier,
+            rr_ratio=rr_ratio,
         )
         self.tg = TelegramAlert()
 
@@ -234,7 +244,8 @@ class RobotoBot:
         trade = self.risk.open_trade(decision)
         logger.info(
             f"[Ciclo {self._cycle}] 🟢 Trade aberto | {trade.direction} @ ${trade.entry_price:,.2f} "
-            f"| SL=${trade.stop_loss:,.2f} | TP=${trade.take_profit:,.2f}"
+            f"| SL=${trade.stop_loss:,.2f} ({trade.stop_loss_mode}) "
+            f"| TP=${trade.take_profit:,.2f} | ID={trade.id}"
         )
 
         if self.db:
@@ -295,7 +306,8 @@ class RobotoBot:
             result = self.technical.analyze(df)
             logger.info(
                 f"[Ciclo {self._cycle}] Técnico: {result.signal} "
-                f"| RSI={result.rsi} | MACD={result.macd_cross} | EMA={result.price_vs_ema}"
+                f"| RSI={result.rsi} | MACD={result.macd_cross} | EMA={result.price_vs_ema} "
+                f"| ATR={result.atr}"
             )
             return result
         except Exception as e:
@@ -319,11 +331,15 @@ class RobotoBot:
             return SentimentResult(signal="neutral", score=0.5, reason=f"Erro: {e}")
 
     def _print_header(self):
+        sl_mode_str = (
+            f"ATR x {self.risk.atr_multiplier} (R:R {self.risk.rr_ratio}:1)"
+            if self.risk.use_atr_stop else
+            f"Fixo {self.risk.stop_loss_pct}% / TP {self.risk.take_profit_pct}%"
+        )
         print("\n" + "="*60)
         print(f"  🤖 Roboto — {self.symbol} {self.interval}")
         print(f"  Saldo inicial    : ${self.risk.initial_balance:,.2f}")
-        print(f"  Stop Loss        : {self.risk.stop_loss_pct}%")
-        print(f"  Take Profit      : {self.risk.take_profit_pct}%")
+        print(f"  SL / TP          : {sl_mode_str}")
         print(f"  Max trades/dia   : {self.risk.max_trades_day}")
         print(f"  Max drawdown     : {self.risk.max_drawdown_pct}%")
         print(f"  Circuit breaker  : {self.risk.max_consecutive_losses} perdas consecutivas")
@@ -373,8 +389,11 @@ if __name__ == "__main__":
     parser.add_argument("--sleep",       default=30,         type=int,   help="Seg entre ciclos (0=usa timeframe)")
     parser.add_argument("--weak",        action="store_true",            help="Aceita sinais FRACOS também")
     parser.add_argument("--no-db",       action="store_true",            help="Desativa persistência no Supabase")
-    parser.add_argument("--max-losses",  default=3,          type=int,   help="Circuit breaker: N perdas consecutivas (padrão: 3)")
+    parser.add_argument("--max-losses",  default=3,          type=int,   help="Circuit breaker: N perdas consecutivas")
     parser.add_argument("--news-limit",  default=5,          type=int,   help="Notícias por ciclo (padrão: 5)")
+    parser.add_argument("--no-atr",      action="store_true",            help="Desativa SL adaptativo ATR (usa % fixo)")
+    parser.add_argument("--atr-mult",    default=1.5,        type=float, help="Multiplicador ATR para SL (padrão: 1.5)")
+    parser.add_argument("--rr",          default=2.0,        type=float, help="R:R mínimo para TP (padrão: 2.0)")
     args = parser.parse_args()
 
     bot = RobotoBot(
@@ -387,5 +406,8 @@ if __name__ == "__main__":
         use_db=not args.no_db,
         max_consecutive_losses=args.max_losses,
         news_limit=args.news_limit,
+        use_atr_stop=not args.no_atr,
+        atr_multiplier=args.atr_mult,
+        rr_ratio=args.rr,
     )
     bot.run()
