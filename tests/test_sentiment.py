@@ -3,7 +3,8 @@ tests/test_sentiment.py
 Testes unitários do SentimentAnalyzer — foco em comportamento de fallback
 e diagnóstico do FinBERT (issues #5 e #9).
 
-Todos os testes são offline: o FinBERT e a NewsAPI são mockados.
+Todos os testes são offline: o FinBERT é mockado via conftest.py.
+NewsApiClient foi removido do sentiment.py (#11); fontes são CryptoPanic + RSS.
 """
 
 import pytest
@@ -155,29 +156,3 @@ def test_score_abaixo_do_threshold_vira_neutral(analyzer):
         result = analyzer.analyze_news([{"title": "Bitcoin maybe going up"}])
     # score 0.55 < min_confidence 0.6 → deve virar neutral
     assert result.signal == "neutral"
-
-
-# ---------------------------------------------------------------------------
-# NewsAPI fallback
-# ---------------------------------------------------------------------------
-
-def test_newsapi_erro_retorna_fallback(analyzer):
-    with patch.object(analyzer._newsapi, "get_everything", side_effect=Exception("timeout")):
-        result = analyzer.get_news_sentiment(keyword="bitcoin")
-    assert result.signal == "neutral"
-    assert result.source == "fallback_newsapi_error"
-    assert result.raw_scores == {}
-
-
-def test_newsapi_status_erro_retorna_fallback(analyzer):
-    with patch.object(analyzer._newsapi, "get_everything", return_value={"status": "error", "code": "apiKeyInvalid"}):
-        result = analyzer.get_news_sentiment(keyword="bitcoin")
-    assert result.signal == "neutral"
-    assert result.source == "fallback_newsapi_error"
-
-
-def test_newsapi_sem_artigos_retorna_fallback(analyzer):
-    with patch.object(analyzer._newsapi, "get_everything", return_value={"status": "ok", "articles": []}):
-        result = analyzer.get_news_sentiment(keyword="bitcoin")
-    assert result.signal == "neutral"
-    assert result.source == "fallback_no_news"
