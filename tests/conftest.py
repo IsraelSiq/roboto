@@ -2,12 +2,30 @@
 conftest.py — fixtures globais de teste.
 
 O CI nao tem acesso a internet para baixar o FinBERT (~440MB) nem credenciais
-reais de Binance/Supabase. Este conftest mocka automaticamente os pontos de I/O
+reais de NewsAPI/Binance. Este conftest mocka automaticamente os pontos de I/O
 externo para que os testes unitarios rodem 100% offline.
 """
 
 import pytest
 from unittest.mock import MagicMock
+
+
+@pytest.fixture(autouse=True)
+def mock_newsapi(monkeypatch):
+    """Evita chamadas reais à NewsAPI em todos os testes."""
+    mock_client = MagicMock()
+    mock_client.get_everything.return_value = {
+        "status": "ok",
+        "articles": [
+            {"title": "Bitcoin rallies", "description": "BTC up 5%"},
+            {"title": "Crypto market grows", "description": "Altcoins follow"},
+        ],
+    }
+    monkeypatch.setattr(
+        "backend.analysis.sentiment.NewsApiClient",
+        lambda **kwargs: mock_client,
+    )
+    return mock_client
 
 
 @pytest.fixture(autouse=True)
