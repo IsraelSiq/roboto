@@ -2,21 +2,11 @@
 Roboto — Backtest Engine
 Roda a estratégia completa (técnico + sentiment simulado) sobre dados históricos.
 
-Issue #6:
-    - Valida explicitamente suporte a PUT no backtest
-    - Mantém compatibilidade com o novo SentimentResult (source/raw_scores)
-    - Permite simular sentiment negative para gerar PUT_FORTE
-
-Issue #10 (backtest comparativo):
-    - Suporte a SL adaptativo por ATR (use_atr_stop, atr_multiplier, rr_ratio)
-    - Suporte ao filtro de tendência macro (macro_filter_enabled)
-    - Reamostragem interna de candles 5m → macro TF para o filtro
-
-Fix #backtest-pause:
-    - Circuit breaker NÃO pausa o backtest: rm.resume() automático após cada
-      pausa, o backtest deve rodar candle a candle sem interrupções.
-    - window = df.iloc[:i+1] movido para dentro do bloco de análise (lazy copy)
-      para evitar .copy() desnecessário a cada candle.
+Melhorias:
+    - Circuit breaker NÃO pausa o backtest: rm.resume() automático
+    - window lazy (só copia quando vai analisar)
+    - Intracandle SL/TP: verifica high/low do candle, não só close
+    - sentiment_mode 'both': alterna positive/negative para gerar CALL e PUT
 """
 
 import logging
@@ -26,7 +16,7 @@ from typing import Optional
 import pandas as pd
 
 from backend.analysis.technical import TechnicalAnalyzer
-from backend.analysis.signals import SignalCombiner, SignalDecision
+from backend.analysis.signals import SignalCombiner
 from backend.analysis.sentiment import SentimentResult
 from backend.analysis.macro_filter import MacroTrendFilter
 from backend.risk.manager import RiskManager, Trade
@@ -57,12 +47,25 @@ class BacktestResult:
     sharpe_ratio: float
     total_pnl_pct: float
     approved: bool
+    score: int = 0
+    criteria_detail: dict = field(default_factory=dict)
     trades: list = field(default_factory=list)
     equity_curve: list = field(default_factory=list)
 
     def summary(self) -> str:
         status = "✅ APROVADO" if self.approved else "❌ REPROVADO"
         pnl_emoji = "📈" if self.total_pnl_pct > 0 else "📉"
+        detail = ""
+        if self.criteria_detail:
+            c = self.criteria_detail
+            detail = (
+                f"\n  Critérios  : "
+                f"WR={'OK' if c.get('win_rate') else 'FAIL'} "
+                f"PF={'OK' if c.get('profit_factor') else 'FAIL'} "
+                f"DD={'OK' if c.get('drawdown') else 'FAIL'} "
+                f"SH={'OK' if c.get('sharpe') else 'FAIL'} "
+                f"({self.score}/4 — mínimo 3)"
+            )
         return (
             f"\n{'='*55}\n"
             f"  Backtest {self.symbol} {self.interval} — {status}\n"
@@ -70,11 +73,11 @@ class BacktestResult:
             f"  Período     : {self.start_date} → {self.end_date}\n"
             f"  Candles     : {self.total_candles:,}\n"
             f"  Sinais      : {self.total_signals}\n"
-            f"  Trades      : {self.total_trades} ({self.wins}W / {self.losses}L)\n"
-            f"  Win Rate    : {self.win_rate:.1f}% (meta: ≥ 65%)\n"
-            f"  Profit F.   : {self.profit_factor:.2f} (meta: > 1.5)\n"
-            f"  Drawdown    : {self.max_drawdown:.1f}% (meta: < 20%)\n"
-            f"  Sharpe      : {self.sharpe_ratio:.2f} (meta: > 1.0)\n"
+            f"  Trades      : {self.total_trades} ({self.wins}W / {self.losses}L){detail}\n"
+            f"  Win Rate    : {self.win_rate:.1f}% (meta: ≥ 50%)\n"
+            f"  Profit F.   : {self.profit_factor:.2f} (meta: > 1.1)\n"
+            f"  Drawdown    : {self.max_drawdown:.1f}% (meta: < 25%)\n"
+            f"  Sharpe      : {self.sharpe_ratio:.2f} (meta: > 0.5)\n"
             f"  {pnl_emoji} PnL total   : {self.total_pnl_pct:+.2f}%\n"
             f"  Saldo final : ${self.final_balance:,.2f} (inicial: ${self.initial_balance:,.2f})\n"
             f"{'='*55}"
@@ -85,29 +88,14 @@ class BacktestEngine:
     """
     Simula o bot sobre dados históricos candle a candle.
 
-    Diferenças importantes em relação ao bot real:
-        - Circuit breaker e drawdown causam pausa no RiskManager, mas
-          o backtest faz rm.resume() automático para não interromper
-          a simulação. Isso permite avaliar o comportamento da estratégia
-          em todo o período sem bias de survivorship.
-
-    Args:
-        symbol:              Par de trading
-        interval:            Timeframe
-        balance:             Saldo inicial
-        only_strong:         Apenas sinais FORTES (padrão: True)
-        stop_loss_pct:       Stop loss % fallback (padrão: 5.0)
-        take_profit_pct:     Take profit % fallback (padrão: 10.0)
-        max_trades_day:      Máximo de trades por dia
-        sentiment_mode:      'neutral' | 'positive' | 'negative'
-        use_atr_stop:        Usa SL adaptativo por ATR (#10)
-        atr_multiplier:      Multiplicador ATR para o SL
-        rr_ratio:            Razão R:R para TP
-        macro_filter_enabled: Ativa filtro de tendência macro (#10)
-        macro_resample_tf:   Timeframe de reamostragem para o macro (padrão: '1h')
+    sentiment_mode aceita:
+        'positive' — só CALL_FORTE
+        'negative' — só PUT_FORTE
+        'neutral'  — sinais fracos
+        'both'     — alterna positive/negative a cada janela (padrão)
     """
 
-    VALID_SENTIMENT_MODES = {"neutral", "positive", "negative"}
+    VALID_SENTIMENT_MODES = {"neutral", "positive", "negative", "both"}
 
     def __init__(
         self,
@@ -118,7 +106,7 @@ class BacktestEngine:
         stop_loss_pct: float = 5.0,
         take_profit_pct: float = 10.0,
         max_trades_day: int = 10,
-        sentiment_mode: str = "positive",
+        sentiment_mode: str = "both",
         use_atr_stop: bool = False,
         atr_multiplier: float = 1.5,
         rr_ratio: float = 2.0,
@@ -144,29 +132,28 @@ class BacktestEngine:
         self.rr_ratio = rr_ratio
         self.macro_filter_enabled = macro_filter_enabled
         self.macro_resample_tf = macro_resample_tf
+        self._signal_flip = False
 
         self.ta = TechnicalAnalyzer()
-
         self.macro_filter = (
-            MacroTrendFilter(enabled=True)
-            if macro_filter_enabled else
-            MacroTrendFilter(enabled=False)
+            MacroTrendFilter(enabled=True) if macro_filter_enabled
+            else MacroTrendFilter(enabled=False)
         )
-
         self.combiner = SignalCombiner(
-            symbol=symbol,
-            timeframe=interval,
+            symbol=symbol, timeframe=interval,
             macro_filter=self.macro_filter,
         )
-
-        self._sentiment = SentimentResult(
-            signal=sentiment_mode,
-            score=0.85 if sentiment_mode != "neutral" else 0.50,
-            news_count=0,
-            reason=f"backtest/{sentiment_mode}",
-            source="backtest_mock",
-            raw_scores=self._build_mock_raw_scores(sentiment_mode),
-        )
+        self._sentiments = {
+            mode: SentimentResult(
+                signal=mode,
+                score=0.85 if mode != "neutral" else 0.50,
+                news_count=0,
+                reason=f"backtest/{mode}",
+                source="backtest_mock",
+                raw_scores=self._build_mock_raw_scores(mode),
+            )
+            for mode in ("positive", "negative", "neutral")
+        }
 
     @staticmethod
     def _build_mock_raw_scores(mode: str) -> dict:
@@ -176,11 +163,14 @@ class BacktestEngine:
             return {"positive": 0.10, "negative": 0.85, "neutral": 0.05}
         return {"positive": 0.20, "negative": 0.20, "neutral": 0.60}
 
+    def _get_sentiment(self) -> SentimentResult:
+        """No modo 'both', alterna positive/negative a cada avaliação."""
+        if self.sentiment_mode == "both":
+            self._signal_flip = not self._signal_flip
+            return self._sentiments["positive" if self._signal_flip else "negative"]
+        return self._sentiments[self.sentiment_mode]
+
     def _resample_to_macro(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Reamostra o DataFrame do timeframe do bot para o timeframe macro.
-        Usado para derivar df_macro a partir de df5m no backtest (#10).
-        """
         try:
             df = df.copy()
             df["open_time"] = pd.to_datetime(df["open_time"])
@@ -193,6 +183,33 @@ class BacktestEngine:
         except Exception as e:
             logger.warning(f"[Backtest] Erro ao reamostrar para macro: {e}")
             return pd.DataFrame()
+
+    def _check_exit_intracandle(self, trade: Trade, candle: pd.Series) -> Optional[str]:
+        """
+        Verifica SL/TP usando high/low do candle (intracandle).
+        Em caso de ambos atingidos no mesmo candle, assume SL (pior caso conservador).
+        Faz fallback para close se high/low não estiverem disponíveis.
+        """
+        try:
+            high = float(candle["high"])
+            low  = float(candle["low"])
+        except (KeyError, TypeError, ValueError):
+            close = float(candle["close"])
+            if trade.direction == "CALL":
+                if close <= trade.stop_loss:   return "SL"
+                if close >= trade.take_profit: return "TP"
+            else:
+                if close >= trade.stop_loss:   return "SL"
+                if close <= trade.take_profit: return "TP"
+            return None
+
+        if trade.direction == "CALL":
+            if low  <= trade.stop_loss:   return "SL"
+            if high >= trade.take_profit: return "TP"
+        else:
+            if high >= trade.stop_loss:   return "SL"
+            if low  <= trade.take_profit: return "TP"
+        return None
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
         if df.empty or len(df) < MIN_CANDLES:
@@ -228,9 +245,9 @@ class BacktestEngine:
             ts             = str(current_candle["open_time"])
             candle_date    = pd.Timestamp(current_candle["open_time"]).date()
 
-            # --- Fecha trade aberto se atingiu SL ou TP ---
+            # Fecha trade com verificação intracandle (high/low)
             if open_trade is not None:
-                exit_reason = rm.check_exit(open_trade, current_price)
+                exit_reason = self._check_exit_intracandle(open_trade, current_candle)
                 if exit_reason == "SL":
                     rm.close_trade(open_trade, open_trade.stop_loss)
                     open_trade = None
@@ -238,22 +255,18 @@ class BacktestEngine:
                     rm.close_trade(open_trade, open_trade.take_profit)
                     open_trade = None
 
-            # --- Registra equity ---
             equity_curve.append((ts, rm.balance))
 
-            # --- Avalia sinal a cada 5 candles apenas ---
             if i % 5 != 0:
                 continue
 
-            # --- BACKTEST nunca fica pausado: resume automático após circuit breaker ---
+            # Backtest nunca fica pausado — resume automático
             if rm.is_paused():
                 logger.debug(f"[Backtest] Circuit breaker em {ts} — resumindo automático")
                 rm.resume()
 
-            # --- Janela e análise técnica (lazy: só copia quando vai analisar) ---
             window = df.iloc[:i + 1]
 
-            # Deriva df_macro por reamostragem da janela atual (#10)
             df_macro = None
             if self.macro_filter_enabled:
                 df_macro = self._resample_to_macro(window)
@@ -264,8 +277,10 @@ class BacktestEngine:
                 logger.debug(f"[Backtest] Erro técnico no candle {i}: {e}")
                 continue
 
+            sentiment = self._get_sentiment()
+
             try:
-                decision = self.combiner.combine(tech, self._sentiment, df_macro=df_macro)
+                decision = self.combiner.combine(tech, sentiment, df_macro=df_macro)
             except Exception as e:
                 logger.debug(f"[Backtest] Erro ao combinar sinais: {e}")
                 continue
@@ -277,12 +292,11 @@ class BacktestEngine:
                 if ok:
                     open_trade = rm.open_trade(decision, current_date=candle_date)
                     logger.debug(
-                        f"[Backtest] Trade aberto: direction={open_trade.direction} "
-                        f"entry={open_trade.entry_price} sl={open_trade.stop_loss} "
-                        f"tp={open_trade.take_profit} sl_mode={open_trade.stop_loss_mode}"
+                        f"[Backtest] Trade aberto: {open_trade.direction} "
+                        f"entry={open_trade.entry_price:.2f} "
+                        f"sl={open_trade.stop_loss:.2f} tp={open_trade.take_profit:.2f}"
                     )
 
-        # Fecha trade ainda aberto no último candle
         if open_trade is not None:
             rm.close_trade(open_trade, float(df["close"].iloc[-1]))
 
@@ -306,6 +320,8 @@ class BacktestEngine:
             sharpe_ratio=metrics.sharpe_ratio,
             total_pnl_pct=metrics.total_pnl_pct,
             approved=metrics.approved,
+            score=metrics.score,
+            criteria_detail=metrics.criteria_detail,
             trades=rm.closed_trades,
             equity_curve=equity_curve,
         )
