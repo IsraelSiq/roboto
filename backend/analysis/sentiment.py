@@ -8,13 +8,20 @@ Arquitetura:
     - threading.Lock garante que só uma thread carrega o modelo (safe para ASGI)
     - Singleton global _FINBERT_PIPELINE: compartilhado entre instâncias (#14)
     - Cache em memória por instância (TTL configurável, padrão: 300s)
+    - Cache Supabase: consulta news_cache antes de chamar NewsClient+FinBERT (#15)
     - Integração com NewsClient (CryptoPanic + RSS fallback)
+
+Hierárquia de cache em get_news_sentiment() (#15):
+    1. Cache memória (in-process, TTL=300s por padrão)
+    2. Cache Supabase news_cache (TTL=NEWS_CACHE_TTL_MINUTES, padrão 15min)
+    3. NewsClient + FinBERT (fonte primária, resultado persiste no Supabase)
 
 Diagnóstico robusto (#5):
     - Loga o raw output do FinBERT antes de qualquer pós-processamento
     - Emite WARNING quando score == 0.50 exato (sinal de fallback estático)
     - Campo `source` em SentimentResult indica de onde veio o resultado:
-        'finbert' | 'cache' | 'fallback_no_news' | 'fallback_newsapi_error' |
+        'finbert' | 'cache' | 'supabase_cache' |
+        'fallback_no_news' | 'fallback_newsapi_error' |
         'fallback_finbert_error' | 'fallback_empty_texts'
 
 Pré-aquecimento (#14):
@@ -32,6 +39,7 @@ Uso:
 """
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -45,10 +53,11 @@ logger = logging.getLogger(__name__)
 _FALLBACK_SCORE = 0.5
 _FALLBACK_SCORE_TOLERANCE = 1e-9
 
+# TTL do cache Supabase (minutos) — configurado via .env (#15)
+_NEWS_CACHE_TTL_MINUTES: int = int(os.getenv("NEWS_CACHE_TTL_MINUTES", "15"))
+
 # -------------------------------------------------------------------
 # Singleton global thread-safe para o pipeline FinBERT (#14)
-# Compartilhado entre todas as instâncias de SentimentAnalyzer para
-# evitar carregar o modelo (~440 MB) mais de uma vez por processo.
 # -------------------------------------------------------------------
 _FINBERT_PIPELINE = None
 _FINBERT_LOCK = threading.Lock()
@@ -82,7 +91,7 @@ class SentimentAnalyzer:
         model_name:     Modelo HuggingFace (padrão: ProsusAI/finbert)
         min_confidence: Score mínimo para considerar o sinal (padrão: 0.6)
         max_headlines:  Máximo de manchetes a analisar por chamada (padrão: 10)
-        cache_ttl:      Tempo de vida do cache em segundos (padrão: 300)
+        cache_ttl:      Tempo de vida do cache em memória em segundos (padrão: 300)
     """
 
     def __init__(
@@ -98,6 +107,7 @@ class SentimentAnalyzer:
         self.cache_ttl = cache_ttl
         self._cache: dict[str, tuple[SentimentResult, float]] = {}
         self._news_client = None
+        self._db = None  # SupabaseClient lazy (#15)
 
     # ----------------------------------------------------------
     # Propriedades públicas (#14)
@@ -112,9 +122,6 @@ class SentimentAnalyzer:
         """
         Pré-aquece o modelo FinBERT explicitamente.
         Útil para deploy — evita timeout na primeira requisição real.
-
-        Returns:
-            True se o modelo foi carregado com sucesso, False se houve erro.
         """
         if self.is_model_loaded:
             logger.info("[FinBERT] Modelo já carregado. Warmup ignorado.")
@@ -127,7 +134,7 @@ class SentimentAnalyzer:
             return False
 
     # ----------------------------------------------------------
-    # NewsClient lazy
+    # Lazy clients
     # ----------------------------------------------------------
 
     def _get_news_client(self):
@@ -136,6 +143,17 @@ class SentimentAnalyzer:
             self._news_client = NewsClient()
         return self._news_client
 
+    def _get_db(self):
+        """Retorna SupabaseClient lazy. Retorna None se Supabase não estiver configurado."""
+        if self._db is None:
+            try:
+                from backend.db.supabase_client import SupabaseClient
+                self._db = SupabaseClient()
+            except Exception as e:
+                logger.warning(f"[NewsCache] Supabase indisponível — cache desativado: {e}")
+                self._db = False  # marca como indisponível para não tentar novamente
+        return self._db if self._db is not False else None
+
     # ----------------------------------------------------------
     # Lazy loading thread-safe (#14)
     # ----------------------------------------------------------
@@ -143,20 +161,16 @@ class SentimentAnalyzer:
     def _load_model(self):
         """
         Carrega o pipeline FinBERT na primeira chamada (lazy loading).
-
-        Thread-safe via double-checked locking:
-        - Verifica sem trava (fast path)
-        - Adquire _FINBERT_LOCK
-        - Verifica novamente dentro da trava (evita double-load)
+        Thread-safe via double-checked locking.
         """
         global _FINBERT_PIPELINE
 
         if _FINBERT_PIPELINE is not None:
-            return  # fast path
+            return
 
         with _FINBERT_LOCK:
             if _FINBERT_PIPELINE is not None:
-                return  # outra thread carregou enquanto esperávamos
+                return
 
             logger.info(
                 f"[FinBERT] Carregando modelo: {self.model_name} "
@@ -301,12 +315,79 @@ class SentimentAnalyzer:
         keyword: str = "bitcoin",
         news_limit: int = 10,
         page_size: Optional[int] = None,
+        symbol: Optional[str] = None,
     ) -> SentimentResult:
         """
-        Busca notícias via NewsClient (CryptoPanic + RSS fallback)
-        e retorna o sentiment classificado pelo FinBERT.
+        Busca notícias e retorna o sentiment classificado pelo FinBERT.
+
+        Hierarquia de cache (#15):
+            1. Cache Supabase (TTL=NEWS_CACHE_TTL_MINUTES) — evita NewsClient+FinBERT
+            2. NewsClient (CryptoPanic + RSS fallback) + FinBERT
+            3. Persiste resultado novo em news_cache para próximos ciclos
+
+        Graceful degradation: se Supabase offline, flui direto para NewsClient.
+
+        Args:
+            keyword:    Palavra-chave de busca (ex: 'bitcoin', 'bnb')
+            news_limit: Máximo de notícias (padrão: 10)
+            page_size:  Alias legado de news_limit
+            symbol:     Símbolo para cache Supabase (ex: 'BTCUSDT'). Se None, usa keyword.
         """
         limit = news_limit if page_size is None else page_size
+        cache_symbol = symbol or keyword.upper()
+
+        # --- 1. Tenta cache Supabase (#15) ---
+        db = self._get_db()
+        if db is not None:
+            try:
+                cached_rows = db.get_cached_news(
+                    symbol=cache_symbol,
+                    ttl_minutes=_NEWS_CACHE_TTL_MINUTES,
+                    limit=limit,
+                )
+                if cached_rows:
+                    # Reconstrói SentimentResult a partir dos scores já calculados
+                    sentiments = [r.get("sentiment", "neutral") for r in cached_rows]
+                    scores = [float(r.get("score") or 0.5) for r in cached_rows]
+                    headlines = [r.get("title", "") for r in cached_rows]
+
+                    pos = sentiments.count("positive")
+                    neg = sentiments.count("negative")
+                    neu = sentiments.count("neutral")
+                    total = len(sentiments)
+
+                    if pos > neg and pos > neu:
+                        signal = "positive"
+                        avg_score = sum(s for s, lbl in zip(scores, sentiments) if lbl == "positive") / max(pos, 1)
+                        reason = f"{pos}/{total} positivas [supabase_cache TTL={_NEWS_CACHE_TTL_MINUTES}min]"
+                    elif neg > pos and neg > neu:
+                        signal = "negative"
+                        avg_score = sum(s for s, lbl in zip(scores, sentiments) if lbl == "negative") / max(neg, 1)
+                        reason = f"{neg}/{total} negativas [supabase_cache TTL={_NEWS_CACHE_TTL_MINUTES}min]"
+                    else:
+                        signal = "neutral"
+                        avg_score = sum(scores) / total if total else 0.5
+                        reason = f"Neutra/empate [supabase_cache TTL={_NEWS_CACHE_TTL_MINUTES}min]"
+
+                    logger.info(
+                        f"[NewsCache] Hit Supabase para '{cache_symbol}': "
+                        f"{total} notícias → {signal} ({avg_score:.4f})"
+                    )
+                    return SentimentResult(
+                        signal=signal,
+                        score=round(avg_score, 4),
+                        news_count=total,
+                        positive_count=pos,
+                        negative_count=neg,
+                        neutral_count=neu,
+                        headlines=headlines,
+                        reason=reason,
+                        source="supabase_cache",
+                    )
+            except Exception as e:
+                logger.warning(f"[NewsCache] Falha ao ler cache Supabase: {e} — seguindo para NewsClient")
+
+        # --- 2. NewsClient + FinBERT ---
         try:
             client = self._get_news_client()
             news_list = client.get_news(keyword=keyword, limit=limit)
@@ -322,7 +403,31 @@ class SentimentAnalyzer:
                 )
 
             logger.info(f"[Sentiment] {len(news_list)} notícias obtidas para '{keyword}'")
-            return self.analyze_news(news_list)
+            result = self.analyze_news(news_list)
+
+            # --- 3. Persiste no Supabase para próximos ciclos (#15) ---
+            if db is not None and result.source == "finbert":
+                try:
+                    articles_to_cache = [
+                        {
+                            "title":       n.get("title", ""),
+                            "description": n.get("description"),
+                            "source":      n.get("source"),
+                            "url":         n.get("url"),
+                            "sentiment":   result.signal,
+                            "score":       result.score,
+                        }
+                        for n in news_list[:self.max_headlines]
+                    ]
+                    db.cache_news(symbol=cache_symbol, articles=articles_to_cache)
+                    logger.debug(
+                        f"[NewsCache] {len(articles_to_cache)} notícias persistidas "
+                        f"em news_cache para '{cache_symbol}'"
+                    )
+                except Exception as e:
+                    logger.warning(f"[NewsCache] Falha ao persistir cache: {e}")
+
+            return result
 
         except Exception as e:
             logger.warning(f"[Sentiment] Erro no NewsClient para '{keyword}': {e} — usando neutral")

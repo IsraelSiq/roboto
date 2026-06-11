@@ -6,13 +6,13 @@ Tabelas utilizadas (conforme schema real do projeto):
     signals      — sinais gerados a cada ciclo
     trades       — trades abertos/fechados
     bot_sessions — sessões do bot
-    news_cache   — notícias já processadas pelo FinBERT
+    news_cache   — notícias já processadas pelo FinBERT (com TTL, #15)
     backtest_runs— resultados de backtests (Fase 8)
 """
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -161,13 +161,59 @@ class SupabaseClient:
             return []
 
     # ----------------------------------------------------------
-    # NEWS CACHE
+    # NEWS CACHE (#15)
     # ----------------------------------------------------------
+
+    def get_cached_news(
+        self,
+        symbol: str,
+        ttl_minutes: int = 15,
+        limit: int = 10,
+    ) -> list[dict]:
+        """
+        Retorna notícias recentes do cache Supabase dentro do TTL.
+
+        Filtra por `created_at > now() - ttl_minutes` no lado do cliente
+        (compatível com qualquer tier do Supabase sem precisar de RPC).
+
+        Args:
+            symbol:      Símbolo do ativo (ex: 'BTCUSDT')
+            ttl_minutes: Janela de validade do cache em minutos (padrão: 15)
+            limit:       Máximo de notícias a retornar (padrão: 10)
+
+        Returns:
+            Lista de dicts com title/description/sentiment/score,
+            ou lista vazia se cache expirado/vazio.
+        """
+        try:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(minutes=ttl_minutes)
+            ).isoformat()
+            res = (
+                self.client.table("news_cache")
+                .select("title, description, sentiment, score, created_at")
+                .eq("symbol", symbol)
+                .gte("created_at", cutoff)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            rows = res.data or []
+            if rows:
+                logger.debug(
+                    f"[NewsCache] Cache hit para '{symbol}': "
+                    f"{len(rows)} notícias (TTL={ttl_minutes}min)"
+                )
+            return rows
+        except Exception as e:
+            logger.warning(f"[NewsCache] Erro ao consultar cache: {e}")
+            return []
 
     def cache_news(self, symbol: str, articles: list):
         """
         Salva notícias processadas no cache para evitar reprocessamento.
-        `articles` é lista de dicts com title, description, source, url, sentiment, score.
+        `articles` é lista de dicts com title, description, source, url,
+        sentiment e score (preenchidos após análise do FinBERT).
         """
         try:
             rows = [
