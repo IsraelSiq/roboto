@@ -15,8 +15,9 @@
       align-items: center;
       gap: 12px;
       border-bottom: 1px solid #2a2d3a;
+      flex-wrap: wrap;
     }
-    header h1 { font-size: 1.3rem; color: #fff; }
+    header h1 { font-size: 1.3rem; color: #fff; flex: 1; }
     .badge {
       padding: 3px 10px;
       border-radius: 20px;
@@ -26,6 +27,17 @@
     .badge.running  { background: #1a3a1a; color: #4caf50; }
     .badge.stopped  { background: #3a1a1a; color: #f44336; }
     .badge.offline  { background: #2a2a1a; color: #ff9800; }
+    .nav-link {
+      color: #888;
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px solid #2a2d3a;
+      transition: all 0.15s;
+    }
+    .nav-link:hover { color: #fff; border-color: #4a4d5a; background: #1e2130; }
+    .nav-link.active { color: #fff; border-color: #7c3aed; background: #1a1230; }
 
     .grid {
       display: grid;
@@ -103,6 +115,8 @@
   <span style="font-size:1.5rem">🤖</span>
   <h1>Roboto Dashboard</h1>
   <span id="status-badge" class="badge offline">Carregando...</span>
+  <a href="/dashboard/" class="nav-link active">Dashboard</a>
+  <a href="/dashboard/reports.html" class="nav-link">📊 Relatórios</a>
 </header>
 
 <div class="grid" id="cards">

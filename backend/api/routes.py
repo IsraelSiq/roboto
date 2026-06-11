@@ -3,29 +3,37 @@ Roboto — FastAPI REST
 Expõe endpoints para o dashboard e integração com Supabase.
 
 Endpoints:
-    GET  /                — health check
-    GET  /status          — status do bot (rodando, saldo, drawdown, finbert_loaded)
-    GET  /signal          — último sinal gerado (memória)
-    GET  /signals         — histórico de sinais (Supabase)
-    GET  /trades          — trades da sessão atual (memória)
-    GET  /trades/history  — histórico de trades (Supabase)
-    GET  /sessions        — histórico de sessões (Supabase)
-    GET  /metrics         — métricas de performance
-    GET  /candles         — últimos candles do símbolo
-    GET  /price           — preço atual
-    GET  /warmup          — pré-aquece o FinBERT em background (#14)
-    POST /bot/start       — inicia o loop do bot  [requer Bearer token se API_TOKEN no .env]
-    POST /bot/stop        — para o loop do bot    [requer Bearer token se API_TOKEN no .env]
-    POST /bot/resume      — retoma após pausa     [requer Bearer token se API_TOKEN no .env]
+    GET  /                      — health check
+    GET  /status                — status do bot (rodando, saldo, drawdown, finbert_loaded)
+    GET  /signal                — último sinal gerado (memória)
+    GET  /signals               — histórico de sinais (Supabase)
+    GET  /trades                — trades da sessão atual (memória)
+    GET  /trades/history        — histórico de trades (Supabase)
+    GET  /sessions              — histórico de sessões (Supabase)
+    GET  /metrics               — métricas de performance
+    GET  /candles               — últimos candles do símbolo
+    GET  /price                 — preço atual
+    GET  /warmup                — pré-aquece o FinBERT em background (#14)
+    GET  /reports/summary       — resumo geral de performance (#29)
+    GET  /reports/trades        — histórico paginado com filtros (#29)
+    GET  /reports/export/csv    — exporta trades para CSV (#29)
+    GET  /reports/equity-curve  — série temporal para gráfico (#29)
+    POST /bot/start             — inicia o loop do bot  [requer Bearer token se API_TOKEN no .env]
+    POST /bot/stop              — para o loop do bot    [requer Bearer token se API_TOKEN no .env]
+    POST /bot/resume            — retoma após pausa     [requer Bearer token se API_TOKEN no .env]
 """
 
+import csv
+import io
 import logging
 import os
 import threading
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -168,7 +176,7 @@ class BotConfig(BaseModel):
 
 
 # ----------------------------------------------------------
-# ENDPOINTS
+# ENDPOINTS — Health / Status
 # ----------------------------------------------------------
 
 @app.get("/", tags=["Health"])
@@ -237,6 +245,10 @@ def warmup_model():
     }
 
 
+# ----------------------------------------------------------
+# ENDPOINTS — Signals
+# ----------------------------------------------------------
+
 @app.get("/signal", tags=["Signals"])
 def get_last_signal():
     """Último sinal gerado pelo bot (memória da sessão atual)."""
@@ -256,6 +268,10 @@ def get_signals(
         raise HTTPException(status_code=503, detail="Supabase indisponível")
     return {"signals": db.get_last_signals(symbol=symbol, limit=limit)}
 
+
+# ----------------------------------------------------------
+# ENDPOINTS — Trades
+# ----------------------------------------------------------
 
 @app.get("/trades", tags=["Trades"])
 def get_trades():
@@ -297,6 +313,10 @@ def get_trades_history(
     return db.get_trades(symbol=symbol, limit=limit)
 
 
+# ----------------------------------------------------------
+# ENDPOINTS — Sessions
+# ----------------------------------------------------------
+
 @app.get("/sessions", tags=["Sessions"])
 def get_sessions():
     """Histórico de sessões do bot persistidas no Supabase."""
@@ -313,6 +333,10 @@ def get_sessions():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ----------------------------------------------------------
+# ENDPOINTS — Metrics
+# ----------------------------------------------------------
 
 @app.get("/metrics", tags=["Metrics"])
 def get_metrics():
@@ -335,6 +359,228 @@ def get_metrics():
         "approved": result.approved,
     }
 
+
+# ----------------------------------------------------------
+# ENDPOINTS — Reports (#29)
+# ----------------------------------------------------------
+
+@app.get("/reports/summary", tags=["Reports"])
+def get_reports_summary(
+    symbol: str = Query("BTCUSDT"),
+):
+    """
+    Resumo geral de performance agregado dos trades no Supabase.
+    Retorna: win_rate, pnl_total, max_drawdown, sharpe_ratio, total_trades.
+    (#29)
+    """
+    db = _get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Supabase indisponível")
+
+    trades = db.get_trades(symbol=symbol, limit=500)
+    closed = [t for t in trades if t.get("result") in ("WIN", "LOSS")]
+
+    if not closed:
+        return {
+            "symbol": symbol,
+            "total_trades": 0,
+            "win_rate": None,
+            "pnl_total": None,
+            "max_drawdown": None,
+            "sharpe_ratio": None,
+            "profit_factor": None,
+        }
+
+    wins   = sum(1 for t in closed if t["result"] == "WIN")
+    losses = sum(1 for t in closed if t["result"] == "LOSS")
+    total  = len(closed)
+
+    pnls = [float(t["pnl_pct"] or 0) for t in closed]
+    pnl_total = round(sum(pnls), 4)
+    win_rate  = round(wins / total * 100, 2) if total else 0
+
+    gross_profit = sum(p for p in pnls if p > 0)
+    gross_loss   = abs(sum(p for p in pnls if p < 0))
+    profit_factor = round(gross_profit / gross_loss, 4) if gross_loss > 0 else None
+
+    # Max drawdown a partir da curva de equity acumulada
+    equity = 0.0
+    peak   = 0.0
+    max_dd = 0.0
+    for p in pnls:
+        equity += p
+        if equity > peak:
+            peak = equity
+        dd = peak - equity
+        if dd > max_dd:
+            max_dd = dd
+    max_dd = round(max_dd, 4)
+
+    # Sharpe simplificado (retorno médio / desvio padrão, ann=252)
+    import statistics
+    sharpe = None
+    if len(pnls) >= 2:
+        try:
+            mu  = statistics.mean(pnls)
+            std = statistics.stdev(pnls)
+            sharpe = round(mu / std * (252 ** 0.5), 4) if std > 0 else None
+        except Exception:
+            pass
+
+    return {
+        "symbol":        symbol,
+        "total_trades":  total,
+        "wins":          wins,
+        "losses":        losses,
+        "win_rate":      win_rate,
+        "pnl_total":     pnl_total,
+        "max_drawdown":  max_dd,
+        "sharpe_ratio":  sharpe,
+        "profit_factor": profit_factor,
+    }
+
+
+@app.get("/reports/trades", tags=["Reports"])
+def get_reports_trades(
+    symbol:    str           = Query("BTCUSDT"),
+    result:    Optional[str] = Query(None, description="WIN | LOSS | PENDING"),
+    date_from: Optional[str] = Query(None, description="ISO date, ex: 2026-01-01"),
+    date_to:   Optional[str] = Query(None, description="ISO date, ex: 2026-12-31"),
+    page:      int           = Query(1, ge=1),
+    per_page:  int           = Query(20, ge=1, le=100),
+):
+    """
+    Histórico paginado de trades com filtros opcionais.
+    Filtros: symbol, result (WIN/LOSS/PENDING), date_from, date_to.
+    Paginação: page + per_page.
+    (#29)
+    """
+    db = _get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Supabase indisponível")
+
+    all_trades = db.get_trades(symbol=symbol, limit=500)
+
+    # Filtros client-side (Supabase free tier não requer RPC)
+    filtered = all_trades
+
+    if result:
+        filtered = [t for t in filtered if t.get("result") == result.upper()]
+
+    if date_from:
+        try:
+            dt_from = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
+            filtered = [
+                t for t in filtered
+                if t.get("created_at") and
+                datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")) >= dt_from
+            ]
+        except ValueError:
+            pass
+
+    if date_to:
+        try:
+            dt_to = datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc)
+            filtered = [
+                t for t in filtered
+                if t.get("created_at") and
+                datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")) <= dt_to
+            ]
+        except ValueError:
+            pass
+
+    total = len(filtered)
+    start = (page - 1) * per_page
+    end   = start + per_page
+    page_data = filtered[start:end]
+
+    return {
+        "trades":      page_data,
+        "total":       total,
+        "page":        page,
+        "per_page":    per_page,
+        "total_pages": max(1, -(-total // per_page)),  # ceil division
+    }
+
+
+@app.get("/reports/export/csv", tags=["Reports"])
+def export_trades_csv(
+    symbol: str = Query("BTCUSDT"),
+):
+    """
+    Exporta todos os trades do símbolo para download CSV.
+    Retorna StreamingResponse com Content-Disposition: attachment.
+    (#29)
+    """
+    db = _get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Supabase indisponível")
+
+    trades = db.get_trades(symbol=symbol, limit=500)
+
+    cols = [
+        "id", "symbol", "direction", "strength",
+        "entry_price", "exit_price", "pnl_pct",
+        "result", "created_at", "closed_at",
+    ]
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    writer.writeheader()
+    for t in trades:
+        writer.writerow({k: t.get(k, "") for k in cols})
+    buf.seek(0)
+
+    filename = f"roboto_trades_{symbol}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/reports/equity-curve", tags=["Reports"])
+def get_equity_curve(
+    symbol: str = Query("BTCUSDT"),
+):
+    """
+    Série temporal para o gráfico de equity curve.
+    Retorna lista de pontos [{ts, equity, pnl_pct}] ordenada por data.
+    (#29)
+    """
+    db = _get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Supabase indisponível")
+
+    trades = db.get_trades(symbol=symbol, limit=500)
+    closed = [
+        t for t in trades
+        if t.get("result") in ("WIN", "LOSS") and t.get("pnl_pct") is not None
+    ]
+
+    # Ordena do mais antigo para o mais recente
+    try:
+        closed.sort(key=lambda t: t.get("created_at") or "")
+    except Exception:
+        pass
+
+    points = []
+    equity = 0.0
+    for t in closed:
+        pnl = float(t["pnl_pct"])
+        equity += pnl
+        points.append({
+            "ts":      t.get("closed_at") or t.get("created_at"),
+            "equity":  round(equity, 4),
+            "pnl_pct": round(pnl, 4),
+        })
+
+    return {"symbol": symbol, "points": points, "total": len(points)}
+
+
+# ----------------------------------------------------------
+# ENDPOINTS — Market
+# ----------------------------------------------------------
 
 @app.get("/candles", tags=["Market"])
 def get_candles(symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100):
@@ -362,6 +608,10 @@ def get_price(symbol: str = "BTCUSDT"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ----------------------------------------------------------
+# ENDPOINTS — Bot Control
+# ----------------------------------------------------------
 
 @app.post("/bot/start", tags=["Bot"])
 def start_bot(
