@@ -6,6 +6,11 @@ Issue #6:
     - Valida explicitamente suporte a PUT no backtest
     - Mantém compatibilidade com o novo SentimentResult (source/raw_scores)
     - Permite simular sentiment negative para gerar PUT_FORTE
+
+Issue #10 (backtest comparativo):
+    - Suporte a SL adaptativo por ATR (use_atr_stop, atr_multiplier, rr_ratio)
+    - Suporte ao filtro de tendência macro (macro_filter_enabled)
+    - Reamostragem interna de candles 5m → macro TF para o filtro
 """
 
 import logging
@@ -17,6 +22,7 @@ import pandas as pd
 from backend.analysis.technical import TechnicalAnalyzer
 from backend.analysis.signals import SignalCombiner, SignalDecision
 from backend.analysis.sentiment import SentimentResult
+from backend.analysis.macro_filter import MacroTrendFilter
 from backend.risk.manager import RiskManager, Trade
 from backend.risk.metrics import PerformanceMetrics
 
@@ -74,14 +80,19 @@ class BacktestEngine:
     Simula o bot sobre dados históricos candle a candle.
 
     Args:
-        symbol:          Par de trading
-        interval:        Timeframe
-        balance:         Saldo inicial
-        only_strong:     Apenas sinais FORTES (padrão: True)
-        stop_loss_pct:   Stop loss % (padrão: 5.0)
-        take_profit_pct: Take profit % (padrão: 10.0)
-        max_trades_day:  Máximo de trades por dia
-        sentiment_mode:  'neutral' | 'positive' | 'negative' (padrão: 'positive')
+        symbol:              Par de trading
+        interval:            Timeframe
+        balance:             Saldo inicial
+        only_strong:         Apenas sinais FORTES (padrão: True)
+        stop_loss_pct:       Stop loss % fallback (padrão: 5.0)
+        take_profit_pct:     Take profit % fallback (padrão: 10.0)
+        max_trades_day:      Máximo de trades por dia
+        sentiment_mode:      'neutral' | 'positive' | 'negative'
+        use_atr_stop:        Usa SL adaptativo por ATR (#10)
+        atr_multiplier:      Multiplicador ATR para o SL
+        rr_ratio:            Razão R:R para TP
+        macro_filter_enabled: Ativa filtro de tendência macro (#10)
+        macro_resample_tf:   Timeframe de reamostragem para o macro (padrão: '1h')
     """
 
     VALID_SENTIMENT_MODES = {"neutral", "positive", "negative"}
@@ -96,6 +107,11 @@ class BacktestEngine:
         take_profit_pct: float = 10.0,
         max_trades_day: int = 10,
         sentiment_mode: str = "positive",
+        use_atr_stop: bool = False,
+        atr_multiplier: float = 1.5,
+        rr_ratio: float = 2.0,
+        macro_filter_enabled: bool = False,
+        macro_resample_tf: str = "1h",
     ):
         if sentiment_mode not in self.VALID_SENTIMENT_MODES:
             raise ValueError(
@@ -111,9 +127,25 @@ class BacktestEngine:
         self.take_profit_pct = take_profit_pct
         self.max_trades_day = max_trades_day
         self.sentiment_mode = sentiment_mode
+        self.use_atr_stop = use_atr_stop
+        self.atr_multiplier = atr_multiplier
+        self.rr_ratio = rr_ratio
+        self.macro_filter_enabled = macro_filter_enabled
+        self.macro_resample_tf = macro_resample_tf
 
         self.ta = TechnicalAnalyzer()
-        self.combiner = SignalCombiner(symbol=symbol, timeframe=interval)
+
+        self.macro_filter = (
+            MacroTrendFilter(enabled=True)
+            if macro_filter_enabled else
+            MacroTrendFilter(enabled=False)
+        )
+
+        self.combiner = SignalCombiner(
+            symbol=symbol,
+            timeframe=interval,
+            macro_filter=self.macro_filter,
+        )
 
         self._sentiment = SentimentResult(
             signal=sentiment_mode,
@@ -132,6 +164,24 @@ class BacktestEngine:
             return {"positive": 0.10, "negative": 0.85, "neutral": 0.05}
         return {"positive": 0.20, "negative": 0.20, "neutral": 0.60}
 
+    def _resample_to_macro(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Reamostra o DataFrame do timeframe do bot para o timeframe macro.
+        Usado para derivar df_macro a partir de df5m no backtest (#10).
+        """
+        try:
+            df = df.copy()
+            df["open_time"] = pd.to_datetime(df["open_time"])
+            df = df.set_index("open_time")
+            resample_map = {"1h": "1h", "4h": "4h", "1d": "D"}
+            rule = resample_map.get(self.macro_resample_tf, self.macro_resample_tf)
+            macro = df["close"].resample(rule).last().dropna().reset_index()
+            macro.columns = ["open_time", "close"]
+            return macro
+        except Exception as e:
+            logger.warning(f"[Backtest] Erro ao reamostrar para macro: {e}")
+            return pd.DataFrame()
+
     def run(self, df: pd.DataFrame) -> BacktestResult:
         if df.empty or len(df) < MIN_CANDLES:
             raise ValueError(f"DataFrame insuficiente: {len(df)} candles (mínimo: {MIN_CANDLES})")
@@ -142,6 +192,9 @@ class BacktestEngine:
             take_profit_pct=self.take_profit_pct,
             max_trades_day=self.max_trades_day,
             only_strong=self.only_strong,
+            use_atr_stop=self.use_atr_stop,
+            atr_multiplier=self.atr_multiplier,
+            rr_ratio=self.rr_ratio,
         )
 
         total_signals = 0
@@ -153,7 +206,8 @@ class BacktestEngine:
 
         logger.info(
             f"[Backtest] Iniciando {self.symbol} {self.interval} "
-            f"| {len(df):,} candles | sentiment={self.sentiment_mode}"
+            f"| {len(df):,} candles | sentiment={self.sentiment_mode} "
+            f"| atr={self.use_atr_stop} | macro={self.macro_filter_enabled}"
         )
 
         for i in range(MIN_CANDLES, len(df)):
@@ -180,6 +234,11 @@ class BacktestEngine:
             if rm.is_paused():
                 continue
 
+            # Deriva df_macro por reamostragem da janela atual (#10)
+            df_macro = None
+            if self.macro_filter_enabled:
+                df_macro = self._resample_to_macro(window)
+
             try:
                 tech = self.ta.analyze(window)
             except Exception as e:
@@ -187,7 +246,7 @@ class BacktestEngine:
                 continue
 
             try:
-                decision = self.combiner.combine(tech, self._sentiment)
+                decision = self.combiner.combine(tech, self._sentiment, df_macro=df_macro)
             except Exception as e:
                 logger.debug(f"[Backtest] Erro ao combinar sinais: {e}")
                 continue
@@ -200,7 +259,8 @@ class BacktestEngine:
                     open_trade = rm.open_trade(decision, current_date=candle_date)
                     logger.debug(
                         f"[Backtest] Trade aberto: direction={open_trade.direction} "
-                        f"entry={open_trade.entry_price} sl={open_trade.stop_loss} tp={open_trade.take_profit}"
+                        f"entry={open_trade.entry_price} sl={open_trade.stop_loss} "
+                        f"tp={open_trade.take_profit} sl_mode={open_trade.stop_loss_mode}"
                     )
 
         if open_trade is not None:
