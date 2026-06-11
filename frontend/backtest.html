@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Roboto — Backtest</title>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" defer></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; }
+
+    header {
+      background: #1a1d27; padding: 16px 32px;
+      display: flex; align-items: center; gap: 12px;
+      border-bottom: 1px solid #2a2d3a; flex-wrap: wrap;
+    }
+    header h1 { font-size: 1.3rem; color: #fff; flex: 1; }
+    .nav-link {
+      color: #888; text-decoration: none; font-size: 0.85rem;
+      padding: 5px 12px; border-radius: 6px;
+      border: 1px solid #2a2d3a; transition: all 0.15s;
+    }
+    .nav-link:hover  { color: #fff; border-color: #4a4d5a; background: #1e2130; }
+    .nav-link.active { color: #fff; border-color: #7c3aed; background: #1a1230; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 24px;
+      padding: 24px 32px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; padding: 16px; }
+    }
+
+    .panel {
+      background: #1a1d27;
+      border-radius: 10px;
+      border: 1px solid #2a2d3a;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 14px 20px;
+      font-size: 0.85rem; text-transform: uppercase;
+      letter-spacing: 0.08em; color: #aaa;
+      border-bottom: 1px solid #2a2d3a;
+    }
+    .panel-body { padding: 20px; }
+
+    .form-group { margin-bottom: 14px; }
+    .form-group label {
+      display: block; font-size: 0.75rem; color: #888;
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 5px;
+    }
+    .form-group input,
+    .form-group select {
+      width: 100%; background: #0f1117; color: #ccc;
+      border: 1px solid #2a2d3a; border-radius: 6px;
+      padding: 8px 12px; font-size: 0.85rem; outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus,
+    .form-group select:focus { border-color: #7c3aed; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .checkbox-label {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.85rem; color: #ccc; cursor: pointer;
+    }
+    .checkbox-label input { width: auto; }
+    .section-title {
+      font-size: 0.7rem; text-transform: uppercase;
+      letter-spacing: 0.06em; color: #555;
+      margin: 16px 0 10px; border-top: 1px solid #1e2130; padding-top: 14px;
+    }
+
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 12px; border-radius: 8px;
+      font-size: 0.9rem; font-weight: 700; cursor: pointer; border: none;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-run { background: #7c3aed; color: #fff; }
+
+    /* Progress */
+    .progress-wrap {
+      margin-top: 14px; display: none;
+    }
+    .progress-bar-bg {
+      background: #13151f; border-radius: 4px; height: 6px; overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%; background: #7c3aed;
+      border-radius: 4px; width: 0%;
+      transition: width 0.4s ease;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.6; }
+    }
+    .progress-label { font-size: 0.75rem; color: #666; margin-top: 6px; text-align: center; }
+
+    /* Result cards */
+    .result-section { display: none; }
+    .verdict {
+      display: flex; align-items: center; gap: 14px;
+      background: #13151f; border-radius: 10px;
+      padding: 16px 20px; margin-bottom: 20px;
+      border: 1px solid #2a2d3a;
+    }
+    .verdict-badge {
+      padding: 6px 16px; border-radius: 20px;
+      font-size: 0.95rem; font-weight: 700;
+    }
+    .verdict-badge.approved { background: #1a3a1a; color: #4caf50; border: 1px solid #4caf5044; }
+    .verdict-badge.rejected { background: #3a1a1a; color: #f44336; border: 1px solid #f4433644; }
+    .verdict-meta { font-size: 0.82rem; color: #666; }
+    .verdict-meta strong { color: #aaa; }
+
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .card { background: #13151f; border-radius: 8px; padding: 14px 16px; border: 1px solid #2a2d3a; }
+    .card .lbl { font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.04em; }
+    .card .val { font-size: 1.4rem; font-weight: 700; margin-top: 4px; color: #fff; }
+    .card .val.green  { color: #4caf50; }
+    .card .val.red    { color: #f44336; }
+    .card .val.yellow { color: #ff9800; }
+    .card .meta { font-size: 0.7rem; color: #444; margin-top: 3px; }
+
+    /* Equity chart */
+    #equity-chart { width: 100%; height: 280px; }
+
+    /* Trades table */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { padding: 9px 14px; text-align: left; color: #666; font-weight: 500; border-bottom: 1px solid #2a2d3a; }
+    td { padding: 9px 14px; border-bottom: 1px solid #1e2130; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1e2235; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .tag.WIN  { background:#1a3a1a; color:#4caf50; }
+    .tag.LOSS { background:#3a1a1a; color:#f44336; }
+    .tag.CALL_FORTE { background:#1a3a1a; color:#4caf50; }
+    .tag.PUT_FORTE  { background:#3a1a1a; color:#f44336; }
+    .tag.CALL_FRACO { background:#1a2a1a; color:#81c784; }
+    .tag.PUT_FRACO  { background:#2a1a1a; color:#e57373; }
+
+    /* Error */
+    .error-box {
+      background: #2a1a1a; border: 1px solid #f4433644;
+      color: #f44336; border-radius: 8px; padding: 14px 16px;
+      font-size: 0.85rem; display: none; margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span style="font-size:1.5rem">🧠</span>
+  <h1>Roboto — Backtest</h1>
+  <a href="/"        class="nav-link">Dashboard</a>
+  <a href="/reports" class="nav-link">📊 Relatórios</a>
+  <a href="/control" class="nav-link">⚙️ Controle</a>
+  <a href="/backtest" class="nav-link active">🧠 Backtest</a>
+</header>
+
+<div class="layout">
+
+  <!-- Coluna esquerda: formulário -->
+  <div>
+    <div class="panel">
+      <div class="panel-header">🔧 Parâmetros</div>
+      <div class="panel-body">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Símbolo</label>
+            <select id="p-symbol">
+              <option value="BTCUSDT" selected>BTCUSDT</option>
+              <option value="ETHUSDT">ETHUSDT</option>
+              <option value="BNBUSDT">BNBUSDT</option>
+              <option value="SOLUSDT">SOLUSDT</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Timeframe</label>
+            <select id="p-interval">
+              <option value="1m">1m</option>
+              <option value="5m" selected>5m</option>
+              <option value="15m">15m</option>
+              <option value="30m">30m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Data Inicial</label>
+            <input type="date" id="p-start" value="2026-01-01" />
+          </div>
+          <div class="form-group">
+            <label>Data Final</label>
+            <input type="date" id="p-end" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Saldo Inicial (USDT)</label>
+          <input type="number" id="p-balance" value="10000" min="100" step="100" />
+        </div>
+
+        <div class="form-group">
+          <label>Modo Sentiment</label>
+          <select id="p-sentiment">
+            <option value="positive" selected>Positive (otimista)</option>
+            <option value="neutral">Neutral</option>
+            <option value="negative">Negative (pessimista)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="p-only-strong" checked />
+            Only Strong
+          </label>
+        </div>
+
+        <div class="section-title">⚡ SL / TP</div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="p-atr" />
+            SL adaptativo por ATR
+          </label>
+        </div>
+
+        <div class="form-row" id="atr-fields" style="display:none">
+          <div class="form-group">
+            <label>Multiplicador ATR</label>
+            <input type="number" id="p-atr-mult" value="1.5" step="0.1" min="0.5" />
+          </div>
+          <div class="form-group">
+            <label>R:R Ratio</label>
+            <input type="number" id="p-rr" value="2.0" step="0.1" min="1.0" />
+          </div>
+        </div>
+
+        <div class="section-title">📈 Filtro Macro</div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="p-macro" />
+            Ativar filtro de tendência macro
+          </label>
+        </div>
+
+        <div class="form-group" id="macro-tf-field" style="display:none">
+          <label>Timeframe Macro</label>
+          <select id="p-macro-tf">
+            <option value="1h" selected>1h</option>
+            <option value="4h">4h</option>
+            <option value="1d">1d</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-top:6px">
+          <label class="checkbox-label">
+            <input type="checkbox" id="p-save" checked />
+            Salvar resultado no Supabase
+          </label>
+        </div>
+
+        <button class="btn btn-run" id="btn-run" onclick="runBacktest()">
+          ▶ Rodar Backtest
+        </button>
+
+        <div class="progress-wrap" id="progress-wrap">
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-label" id="progress-label">Carregando dados históricos...</div>
+        </div>
+
+        <div class="error-box" id="error-box"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Coluna direita: resultados -->
+  <div id="result-col">
+    <div class="result-section" id="result-section">
+
+      <!-- Veredicto -->
+      <div class="verdict">
+        <div class="verdict-badge" id="verdict-badge">...</div>
+        <div class="verdict-meta">
+          <strong id="v-period"></strong><br />
+          <span id="v-candles"></span>
+        </div>
+      </div>
+
+      <!-- Cards de métricas -->
+      <div class="cards-grid">
+        <div class="card">
+          <div class="lbl">Win Rate</div>
+          <div class="val" id="r-winrate">—</div>
+          <div class="meta">meta ≥ 65%</div>
+        </div>
+        <div class="card">
+          <div class="lbl">Sharpe Ratio</div>
+          <div class="val" id="r-sharpe">—</div>
+          <div class="meta">meta &gt; 1.0</div>
+        </div>
+        <div class="card">
+          <div class="lbl">Max Drawdown</div>
+          <div class="val" id="r-drawdown">—</div>
+          <div class="meta">meta &lt; 20%</div>
+        </div>
+        <div class="card">
+          <div class="lbl">Profit Factor</div>
+          <div class="val" id="r-pf">—</div>
+          <div class="meta">meta &gt; 1.5</div>
+        </div>
+        <div class="card">
+          <div class="lbl">PnL Total</div>
+          <div class="val" id="r-pnl">—</div>
+          <div class="meta" id="r-balance"></div>
+        </div>
+        <div class="card">
+          <div class="lbl">Trades</div>
+          <div class="val" id="r-trades">—</div>
+          <div class="meta" id="r-signals"></div>
+        </div>
+      </div>
+
+      <!-- Equity Curve -->
+      <div class="panel" style="margin-bottom:20px">
+        <div class="panel-header">📈 Equity Curve</div>
+        <div id="equity-chart"></div>
+      </div>
+
+      <!-- Tabela de trades -->
+      <div class="panel">
+        <div class="panel-header">💼 Trades do Run (<span id="trades-count">0</span>)</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>#</th><th>Direção</th><th>Entrada</th><th>Saída</th>
+              <th>SL</th><th>TP</th><th>PnL</th><th>Resultado</th>
+            </tr></thead>
+            <tbody id="trades-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Estado inicial (antes de rodar) -->
+    <div id="empty-state" style="
+      display:flex; align-items:center; justify-content:center;
+      height:300px; color:#333; font-size:1.1rem;
+    ">
+      Configure os parâmetros e clique em <strong style="color:#7c3aed;margin-left:6px">▶ Rodar Backtest</strong>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const API = (window.API_URL || 'https://roboto-tau3.onrender.com').replace(/\/$/, '');
+
+  // Toggle ATR fields
+  document.getElementById('p-atr').addEventListener('change', e => {
+    document.getElementById('atr-fields').style.display = e.target.checked ? 'grid' : 'none';
+  });
+  document.getElementById('p-macro').addEventListener('change', e => {
+    document.getElementById('macro-tf-field').style.display = e.target.checked ? 'block' : 'none';
+  });
+
+  function fmt(v, d=2) { if(v==null) return '—'; return Number(v).toFixed(d); }
+  function fmtMoney(v) {
+    if(v==null) return '—';
+    return '$'+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2});
+  }
+  function colorClass(v, greenThresh, redThresh, invert=false) {
+    if(v==null) return '';
+    const big = invert ? v <= redThresh : v >= greenThresh;
+    const sml = invert ? v >= greenThresh : v <= redThresh;
+    return big ? 'green' : sml ? 'red' : 'yellow';
+  }
+
+  // Fake progress
+  let _pTimer = null;
+  function startProgress() {
+    let pct = 0;
+    const msgs = [
+      'Carregando dados históricos...',
+      'Calculando indicadores técnicos...',
+      'Simulando trades candle a candle...',
+      'Calculando métricas...',
+      'Quase pronto...',
+    ];
+    let msgIdx = 0;
+    document.getElementById('progress-wrap').style.display = 'block';
+    document.getElementById('error-box').style.display = 'none';
+    _pTimer = setInterval(() => {
+      pct = Math.min(pct + (Math.random() * 3), 90);
+      document.getElementById('progress-fill').style.width = pct + '%';
+      if(pct > msgIdx * 20 && msgIdx < msgs.length) {
+        document.getElementById('progress-label').textContent = msgs[msgIdx++];
+      }
+    }, 500);
+  }
+  function stopProgress(ok) {
+    clearInterval(_pTimer);
+    document.getElementById('progress-fill').style.width = ok ? '100%' : '0%';
+    setTimeout(() => {
+      document.getElementById('progress-wrap').style.display = 'none';
+      document.getElementById('progress-fill').style.width = '0%';
+    }, 600);
+  }
+
+  async function runBacktest() {
+    const btn = document.getElementById('btn-run');
+    btn.disabled = true;
+    document.getElementById('result-section').style.display = 'none';
+    document.getElementById('empty-state').style.display = 'none';
+    startProgress();
+
+    const payload = {
+      symbol:               document.getElementById('p-symbol').value,
+      interval:             document.getElementById('p-interval').value,
+      start:                document.getElementById('p-start').value,
+      end:                  document.getElementById('p-end').value || null,
+      balance:              parseFloat(document.getElementById('p-balance').value),
+      sentiment_mode:       document.getElementById('p-sentiment').value,
+      only_strong:          document.getElementById('p-only-strong').checked,
+      use_atr_stop:         document.getElementById('p-atr').checked,
+      atr_multiplier:       parseFloat(document.getElementById('p-atr-mult').value),
+      rr_ratio:             parseFloat(document.getElementById('p-rr').value),
+      macro_filter_enabled: document.getElementById('p-macro').checked,
+      macro_timeframe:      document.getElementById('p-macro-tf').value,
+      save:                 document.getElementById('p-save').checked,
+    };
+
+    try {
+      const res  = await fetch(`${API}/backtest/run`, {
+        method:  'POST',
+        headers: {'Content-Type': 'application/json'},
+        body:    JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      stopProgress(true);
+      renderResult(data);
+    } catch(e) {
+      stopProgress(false);
+      document.getElementById('error-box').textContent = '❌ ' + e.message;
+      document.getElementById('error-box').style.display = 'block';
+      document.getElementById('empty-state').style.display = 'flex';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderResult(d) {
+    // Veredicto
+    const vb = document.getElementById('verdict-badge');
+    if(d.approved) { vb.textContent = '✅ APROVADO'; vb.className = 'verdict-badge approved'; }
+    else           { vb.textContent = '❌ REPROVADO'; vb.className = 'verdict-badge rejected'; }
+    document.getElementById('v-period').textContent =
+      `${d.symbol} ${d.interval}  •  ${d.start_date?.slice(0,10)} → ${d.end_date?.slice(0,10)}`;
+    document.getElementById('v-candles').textContent =
+      `${d.total_candles?.toLocaleString()} candles`;
+
+    // Metrics cards
+    const wr = document.getElementById('r-winrate');
+    wr.textContent = d.win_rate != null ? fmt(d.win_rate)+'%' : '—';
+    wr.className = 'val ' + colorClass(d.win_rate, 65, 50);
+
+    const sh = document.getElementById('r-sharpe');
+    sh.textContent = fmt(d.sharpe_ratio);
+    sh.className = 'val ' + colorClass(d.sharpe_ratio, 1.0, 0);
+
+    const dd = document.getElementById('r-drawdown');
+    dd.textContent = fmt(d.max_drawdown)+'%';
+    dd.className = 'val ' + colorClass(d.max_drawdown, 0, 20, true);  // invert: menos é melhor
+
+    const pf = document.getElementById('r-pf');
+    pf.textContent = fmt(d.profit_factor);
+    pf.className = 'val ' + colorClass(d.profit_factor, 1.5, 1.0);
+
+    const pnl = document.getElementById('r-pnl');
+    pnl.textContent = (d.total_pnl_pct > 0 ? '+' : '') + fmt(d.total_pnl_pct)+'%';
+    pnl.className = 'val ' + (d.total_pnl_pct > 0 ? 'green' : d.total_pnl_pct < 0 ? 'red' : 'yellow');
+    document.getElementById('r-balance').textContent =
+      `${fmtMoney(d.initial_balance)} → ${fmtMoney(d.final_balance)}`;
+
+    document.getElementById('r-trades').textContent = d.total_trades ?? '—';
+    document.getElementById('r-signals').textContent = `${d.total_signals} sinais`;
+
+    // Equity curve
+    const pts = d.equity_curve || [];
+    const el  = document.getElementById('equity-chart');
+    if(pts.length) {
+      const xs  = pts.map(p => p.ts);
+      const ys  = pts.map(p => p.equity);
+      const colors = ys.map((y,i) => i===0 ? '#7c3aed' : y >= ys[i-1] ? '#4caf50' : '#f44336');
+      Plotly.newPlot(el, [{
+        x: xs, y: ys, type: 'scatter', mode: 'lines',
+        line: {color: '#7c3aed', width: 1.5},
+        name: 'Equity',
+        hovertemplate: '%{x}<br>$%{y:,.2f}<extra></extra>',
+      }], {
+        paper_bgcolor: '#1a1d27', plot_bgcolor: '#1a1d27',
+        font: {color: '#aaa', size: 11},
+        margin: {t:10, b:40, l:60, r:20},
+        xaxis: {gridcolor: '#2a2d3a', tickfont: {size:9}},
+        yaxis: {gridcolor: '#2a2d3a', tickprefix: '$'},
+        hovermode: 'x unified',
+      }, {responsive: true, displayModeBar: false});
+    } else {
+      el.innerHTML = '<div style="color:#555;padding:30px;text-align:center">Sem dados de equity</div>';
+    }
+
+    // Trades table
+    const trades = d.trades || [];
+    document.getElementById('trades-count').textContent = trades.length;
+    const tbody = document.getElementById('trades-body');
+    if(!trades.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="color:#555;padding:20px;text-align:center">Nenhum trade simulado</td></tr>';
+    } else {
+      tbody.innerHTML = trades.map((t, i) => {
+        const dir = t.direction && t.strength
+          ? `${t.direction}_${t.strength}`.toUpperCase()
+          : (t.direction || '—');
+        const pnlStyle = t.pnl_pct > 0
+          ? 'color:#4caf50' : t.pnl_pct < 0
+          ? 'color:#f44336' : '';
+        return `<tr>
+          <td style="color:#555">${i+1}</td>
+          <td><span class="tag ${dir}">${dir}</span></td>
+          <td>$${fmt(t.entry_price)}</td>
+          <td>${t.exit_price ? '$'+fmt(t.exit_price) : '—'}</td>
+          <td style="color:#666">$${fmt(t.stop_loss)}</td>
+          <td style="color:#666">$${fmt(t.take_profit)}</td>
+          <td style="${pnlStyle}">${t.pnl_pct!=null?(t.pnl_pct>0?'+':'')+fmt(t.pnl_pct)+'%':'—'}</td>
+          <td><span class="tag ${t.result||''}">${t.result||'?'}</span></td>
+        </tr>`;
+      }).join('');
+    }
+
+    document.getElementById('result-section').style.display = 'block';
+    document.getElementById('empty-state').style.display = 'none';
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }
+</script>
+</body>
+</html>
