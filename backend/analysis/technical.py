@@ -4,8 +4,8 @@ Calcula RSI, EMA50, MACD, Bollinger Bands e ATR usando pandas-ta-classic.
 Gera sinal técnico: CALL | PUT | AGUARDAR
 
 Estratégia (scoring 4 indicadores, min_score=2):
-    CALL: RSI<overbought | MACD bullish | Preço>EMA50 | BB lower
-    PUT:  RSI>oversold   | MACD bearish | Preço<EMA50 | BB upper
+    CALL: RSI > rsi_call_threshold | MACD bullish | Preço>EMA50 | BB lower
+    PUT:  RSI < rsi_put_threshold  | MACD bearish | Preço<EMA50 | BB upper
     score >= min_score e maior que o oposto → CALL ou PUT
 
 Issue #7:
@@ -45,11 +45,13 @@ class TechnicalAnalyzer:
     e maior que o score oposto.
 
     Args:
-        rsi_overbought: Nível de sobrecompra (padrão: 70)
-        rsi_oversold:   Nível de sobrevenda (padrão: 30)
-        min_score:      Pontuação mínima para gerar sinal (padrão: 2)
-        min_candles:    Mínimo de candles (padrão: 60)
-        atr_period:     Período do ATR (padrão: 14)
+        rsi_overbought:    Nível de sobrecompra para RSI PUT (padrão: 70)
+        rsi_oversold:      Nível de sobrevenda para RSI CALL (padrão: 30)
+        rsi_call_threshold: RSI acima deste valor pontua CALL (padrão: 55)
+        rsi_put_threshold:  RSI abaixo deste valor pontua PUT (padrão: 45)
+        min_score:         Pontuação mínima para gerar sinal (padrão: 2)
+        min_candles:       Mínimo de candles (padrão: 60)
+        atr_period:        Período do ATR (padrão: 14)
     """
 
     def __init__(
@@ -61,6 +63,8 @@ class TechnicalAnalyzer:
         atr_period: int = 14,
         rsi_overbought: int = 70,
         rsi_oversold: int = 30,
+        rsi_call_threshold: int = 55,
+        rsi_put_threshold: int = 45,
         min_score: int = 2,
         min_candles: int = 60,
     ):
@@ -71,6 +75,8 @@ class TechnicalAnalyzer:
         self.atr_period = atr_period
         self.rsi_overbought = rsi_overbought
         self.rsi_oversold = rsi_oversold
+        self.rsi_call_threshold = rsi_call_threshold
+        self.rsi_put_threshold = rsi_put_threshold
         self.min_score = min_score
         self.min_candles = min_candles
 
@@ -150,12 +156,12 @@ class TechnicalAnalyzer:
         put_score,  put_reasons  = 0, []
 
         if rsi is not None:
-            if rsi < self.rsi_overbought:
+            if rsi > self.rsi_call_threshold:
                 call_score += 1
-                call_reasons.append(f"RSI={rsi:.1f}<{self.rsi_overbought}")
-            if rsi > self.rsi_oversold:
+                call_reasons.append(f"RSI={rsi:.1f}>{self.rsi_call_threshold}")
+            elif rsi < self.rsi_put_threshold:
                 put_score += 1
-                put_reasons.append(f"RSI={rsi:.1f}>{self.rsi_oversold}")
+                put_reasons.append(f"RSI={rsi:.1f}<{self.rsi_put_threshold}")
 
         if macd_val is not None and macd_sig is not None:
             if macd_cross == "UP" or macd_val > macd_sig:

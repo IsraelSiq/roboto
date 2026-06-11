@@ -53,6 +53,7 @@ class NewsClient:
     def get_news(self, keyword: str = "bitcoin", limit: int = 10) -> list[dict]:
         """
         Retorna lista de notícias para o keyword fornecido.
+        Tenta CryptoPanic primeiro (se disponível), depois RSS.
 
         Args:
             keyword: Palavra-chave (ex: 'bitcoin', 'bnb')
@@ -67,15 +68,19 @@ class NewsClient:
             logger.debug(f"[NewsClient] Cache hit para '{keyword}'")
             return cached
 
-        news = []
-        for url in _RSS_SOURCES:
-            if len(news) >= limit:
-                break
-            fetched = self._fetch_rss(url, keyword, limit - len(news))
-            news.extend(fetched)
+        # Tenta CryptoPanic primeiro
+        news = self._fetch_cryptopanic(keyword, limit)
+
+        # Fallback para RSS se CryptoPanic não retornou nada
+        if not news:
+            for url in _RSS_SOURCES:
+                if len(news) >= limit:
+                    break
+                fetched = self._fetch_rss(url, keyword, limit - len(news))
+                news.extend(fetched)
 
         if not news:
-            logger.warning(f"[NewsClient] Todas as fontes RSS falharam para '{keyword}'")
+            logger.warning(f"[NewsClient] Todas as fontes falharam para '{keyword}'")
 
         news = news[:limit]
         self._set_cache(cache_key, news)
@@ -83,8 +88,47 @@ class NewsClient:
         return news
 
     # ----------------------------------------------------------
-    # FONTE
+    # FONTES
     # ----------------------------------------------------------
+
+    def _fetch_cryptopanic(self, keyword: str, limit: int) -> list[dict]:
+        """
+        Busca notícias no CryptoPanic (sem autenticação — feed público).
+        Retorna lista vazia se indisponível ou sem resultados.
+
+        Args:
+            keyword: Palavra-chave para filtrar
+            limit:   Máximo de resultados
+
+        Returns:
+            Lista de dicts com 'title' e 'description'
+        """
+        # CryptoPanic free tier não requer API key para o feed público
+        url = "https://cryptopanic.com/api/free/v1/posts/?format=json&public=true"
+        try:
+            resp = requests.get(
+                url,
+                timeout=_REQUEST_TIMEOUT,
+                headers={"User-Agent": "Roboto/1.0"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("results", [])
+            kw_lower = keyword.lower()
+            news = []
+            for item in results:
+                title = (item.get("title") or "").strip()
+                body  = (item.get("body")  or "").strip()
+                if kw_lower in f"{title} {body}".lower() or self._is_generic_crypto_keyword(kw_lower):
+                    if title:
+                        news.append({"title": title, "description": body[:200]})
+                if len(news) >= limit:
+                    break
+            logger.debug(f"[NewsClient] CryptoPanic: {len(news)} notícias para '{keyword}'")
+            return news
+        except Exception as e:
+            logger.debug(f"[NewsClient] CryptoPanic indisponível: {e}")
+            return []
 
     def _fetch_rss(self, url: str, keyword: str, limit: int) -> list[dict]:
         """Busca em feed RSS e filtra por keyword."""

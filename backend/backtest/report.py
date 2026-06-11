@@ -70,18 +70,24 @@ class PnLReport:
         self.csv_path = csv_path
         self._db = None
 
+    def _get_db(self):
+        """Retorna a instância do SupabaseClient, conectando se necessário."""
+        if self._db is None:
+            try:
+                from backend.db.supabase_client import SupabaseClient
+                self._db = SupabaseClient()
+            except Exception as e:
+                print(f"\n❌ Erro ao conectar no Supabase: {e}")
+                print("   Verifique SUPABASE_URL e SUPABASE_KEY no .env")
+                sys.exit(1)
+        return self._db
+
     def _connect(self):
-        try:
-            from backend.db.supabase_client import SupabaseClient
-            self._db = SupabaseClient()
-        except Exception as e:
-            print(f"\n❌ Erro ao conectar no Supabase: {e}")
-            print("   Verifique SUPABASE_URL e SUPABASE_KEY no .env")
-            sys.exit(1)
+        self._get_db()
 
     def run(self):
         """Executa o relatório e imprime no terminal."""
-        self._connect()
+        db = self._get_db()
         trades_raw = self._fetch_trades()
 
         if not trades_raw:
@@ -106,6 +112,44 @@ class PnLReport:
         if self.csv_path and closed:
             self._export_csv(closed)
 
+    def save(self, result) -> Optional[dict]:
+        """
+        Salva resultado de backtest no Supabase.
+
+        Args:
+            result: BacktestResult com campos symbol, interval, etc.
+
+        Returns:
+            Dict com dados inseridos ou None em caso de erro.
+        """
+        db = self._get_db()
+        payload = {
+            "symbol":          result.symbol,
+            "timeframe":       result.interval,
+            "start_date":      result.start_date,
+            "end_date":        result.end_date,
+            "initial_balance": result.initial_balance,
+            "final_balance":   result.final_balance,
+            "total_candles":   result.total_candles,
+            "total_signals":   result.total_signals,
+            "total_trades":    result.total_trades,
+            "wins":            result.wins,
+            "losses":          result.losses,
+            "win_rate":        result.win_rate,
+            "profit_factor":   result.profit_factor,
+            "max_drawdown":    result.max_drawdown,
+            "sharpe_ratio":    result.sharpe_ratio,
+            "total_pnl_pct":   result.total_pnl_pct,
+            "approved":        result.approved,
+        }
+        try:
+            table = db.client.table("backtest_results")
+            table.insert(payload).execute()
+            return payload
+        except Exception as e:
+            logger.error(f"[BacktestReporter] Erro ao salvar: {e}")
+            return None
+
     # ----------------------------------------------------------
     # BUSCA
     # ----------------------------------------------------------
@@ -113,9 +157,10 @@ class PnLReport:
     def _fetch_trades(self) -> list[dict]:
         """Busca trades do Supabase com filtros de símbolo e período."""
         try:
+            db = self._get_db()
             limit = 500 if self.days is None else min(self.days * 50, 1000)
             symbol = self.symbol or "BTCUSDT"
-            rows = self._db.get_trades(symbol=symbol, limit=limit)
+            rows = db.get_trades(symbol=symbol, limit=limit)
 
             if self.days is not None:
                 cutoff = datetime.now(timezone.utc) - timedelta(days=self.days)
@@ -214,12 +259,16 @@ class PnLReport:
             print(f"  ❌ Erro ao exportar CSV: {e}")
 
 
+# Alias para compatibilidade com testes e código que importa BacktestReporter
+BacktestReporter = PnLReport
+
+
 # ----------------------------------------------------------
 # Entry point
 # ----------------------------------------------------------
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.WARNING,  # só erros no terminal durante o relatório
+        level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(message)s",
     )
 

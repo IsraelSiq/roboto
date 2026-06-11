@@ -1,12 +1,13 @@
 """
 Roboto — Risk Manager
-Controla stop loss, take profit, max trades/dia e drawdown máximo.
+Controla stop loss, take profit, max trades/dia, drawdown máximo e circuit breaker.
 
 Regras de proteção:
     - Stop loss por trade:       5% (padrão) OU ATR dinâmico
     - Take profit por trade:     10% (padrão)
     - Max trades por dia:        10 (padrão)
     - Drawdown máximo:           20% (pausa automática)
+    - Circuit breaker:           3 perdas consecutivas (pausa automática)
     - Só opera sinais FORTES por padrão
 
 Issue #7:
@@ -62,14 +63,15 @@ class RiskManager:
     Gerencia risco por trade e por dia.
 
     Args:
-        balance:          Saldo inicial em USDT
-        stop_loss_pct:    Stop loss em % (padrão: 5.0)
-        take_profit_pct:  Take profit em % (padrão: 10.0)
-        max_trades_day:   Máx trades por dia (padrão: 10)
-        max_drawdown_pct: Drawdown máximo antes de pausar (padrão: 20.0)
-        only_strong:      Só opera sinais FORTES (padrão: True)
-        use_atr_stop:     Quando True, usa ATR para o stop loss se disponível
-        atr_multiplier:   Multiplicador do ATR para calcular distância do stop
+        balance:                 Saldo inicial em USDT
+        stop_loss_pct:           Stop loss em % (padrão: 5.0)
+        take_profit_pct:         Take profit em % (padrão: 10.0)
+        max_trades_day:          Máx trades por dia (padrão: 10)
+        max_drawdown_pct:        Drawdown máximo antes de pausar (padrão: 20.0)
+        only_strong:             Só opera sinais FORTES (padrão: True)
+        use_atr_stop:            Quando True, usa ATR para o stop loss se disponível
+        atr_multiplier:          Multiplicador do ATR para calcular distância do stop
+        max_consecutive_losses:  Circuit breaker: pausa após N perdas seguidas (padrão: 3)
     """
 
     def __init__(
@@ -82,6 +84,7 @@ class RiskManager:
         only_strong: bool = True,
         use_atr_stop: bool = False,
         atr_multiplier: float = 2.0,
+        max_consecutive_losses: int = 3,
     ):
         self.initial_balance = balance
         self.balance = balance
@@ -93,6 +96,7 @@ class RiskManager:
         self.only_strong = only_strong
         self.use_atr_stop = use_atr_stop
         self.atr_multiplier = atr_multiplier
+        self.max_consecutive_losses = max_consecutive_losses
 
         self._paused = False
         self._pause_reason = ""
@@ -100,6 +104,7 @@ class RiskManager:
         self._open_trade: Optional[Trade] = None
         self._today_count = 0
         self._today_date: Optional[date] = None
+        self._consecutive_losses = 0
 
     def can_trade(
         self,
@@ -189,10 +194,21 @@ class RiskManager:
 
         self._open_trade = None
 
+        # Circuit breaker
+        if trade.result == "WIN":
+            self._consecutive_losses = 0
+        else:
+            self._consecutive_losses += 1
+            if self._consecutive_losses >= self.max_consecutive_losses:
+                self._pause(
+                    f"Circuit breaker: {self._consecutive_losses} perdas consecutivas "
+                    f">= {self.max_consecutive_losses}"
+                )
+
         logger.info(f"[Trade FECHADO] ID={trade.id} | {trade.pnl_summary()} | Saldo: ${self.balance:,.2f}")
 
         drawdown = self._calc_drawdown()
-        if drawdown >= self.max_drawdown_pct:
+        if drawdown >= self.max_drawdown_pct and not self._paused:
             self._pause(f"Drawdown {drawdown:.1f}% >= {self.max_drawdown_pct}%")
 
         return trade
@@ -216,6 +232,7 @@ class RiskManager:
     def resume(self):
         self._paused = False
         self._pause_reason = ""
+        self._consecutive_losses = 0
         logger.info("RiskManager retomado.")
 
     def is_paused(self) -> bool:
@@ -233,6 +250,8 @@ class RiskManager:
             "paused": self._paused,
             "pause_reason": self._pause_reason,
             "total_trades": len(self._trades),
+            "consecutive_losses": self._consecutive_losses,
+            "max_consecutive_losses": self.max_consecutive_losses,
         }
 
     def _pause(self, reason: str):

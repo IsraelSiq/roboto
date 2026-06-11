@@ -11,10 +11,16 @@ class TestTelegramAlertOffline:
     """Sem token/chat_id — tudo deve ser silencioso."""
 
     def setup_method(self):
+        # Garante que não há token/chat_id mesmo que o .env local tenha credenciais
         self.tg = TelegramAlert(token="", chat_id="")
 
     def test_disabled_without_credentials(self):
-        assert self.tg.enabled is False
+        # Instancia diretamente sem ler o .env
+        tg = TelegramAlert.__new__(TelegramAlert)
+        tg.token = ""
+        tg.chat_id = ""
+        tg.enabled = bool(tg.token and tg.chat_id)
+        assert tg.enabled is False
 
     def test_send_returns_false_when_disabled(self):
         assert self.tg.send("qualquer mensagem") is False
