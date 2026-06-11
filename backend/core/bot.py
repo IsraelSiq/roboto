@@ -3,7 +3,7 @@ Roboto — Bot Principal
 Loop automático que une todos os módulos:
     Binance → Técnico → Macro → Sentiment → Sinal → RiskManager → Trade → Métricas
     + Supabase para persistência de sinais, trades e sessões
-    + Telegram para alertas de startup, shutdown, circuit breaker e trades
+    + Telegram para alertas de startup, shutdown, circuit breaker, trades e drawdown
 
 Uso:
     python -m backend.core.bot
@@ -126,7 +126,7 @@ class RobotoBot:
         self._cycle = 0
         self._running = False
         self._stop_reason = "encerrado"
-        self._df_macro = None  # cache dos candles macro
+        self._df_macro = None
 
     # ----------------------------------------------------------
     # LOOP PRINCIPAL
@@ -160,6 +160,9 @@ class RobotoBot:
 
                 self._cycle += 1
                 self._run_cycle()
+
+                # --- Alerta de drawdown elevado (#32) ---
+                self._check_drawdown_alert()
 
                 if self.risk.is_paused():
                     self._stop_reason = self.risk._pause_reason
@@ -230,7 +233,6 @@ class RobotoBot:
         if df is None or df.empty:
             return
 
-        # Candles macro para filtro de tendência (#8)
         if self.macro_filter.enabled:
             self._df_macro = self._fetch_macro_candles()
 
@@ -302,6 +304,11 @@ class RobotoBot:
                 result=trade.result,
                 balance=self.risk.balance,
             )
+            # Drawdown pode ter recuado após WIN — reseta o flag (#32)
+            if trade.result == "WIN":
+                self.tg.reset_drawdown_alert()
+                logger.debug("[Bot] reset_drawdown_alert() após WIN")
+
             if self.db:
                 self.db.save_trade(trade)
         else:
@@ -309,6 +316,28 @@ class RobotoBot:
                 f"[Monitor] Trade em aberto | {trade.direction} @ ${trade.entry_price:,.2f} "
                 f"→ atual ${current_price:,.2f} | SL=${trade.stop_loss:,.2f} | TP=${trade.take_profit:,.2f}"
             )
+
+    # ----------------------------------------------------------
+    # DRAWDOWN ALERT (#32)
+    # ----------------------------------------------------------
+
+    def _check_drawdown_alert(self):
+        """
+        Verifica o drawdown atual e dispara alerta Telegram se ultrapassar
+        o threshold configurado em DRAWDOWN_ALERT_PCT (padrão: 10%).
+        Chamado ao final de cada ciclo, após _run_cycle().
+        Anti-spam garantido pelo flag interno de TelegramAlert.
+        """
+        try:
+            status = self.risk.status()
+            dd = status.get("drawdown_pct", 0.0) or 0.0
+            self.tg.drawdown_alert(
+                drawdown_pct=dd,
+                balance=self.risk.balance,
+                symbol=self.symbol,
+            )
+        except Exception as e:
+            logger.debug(f"[Bot] _check_drawdown_alert erro (ignorando): {e}")
 
     # ----------------------------------------------------------
     # HELPERS
@@ -326,7 +355,6 @@ class RobotoBot:
             return None
 
     def _fetch_macro_candles(self):
-        """Busca candles do timeframe macro para o filtro de tendência (#8)."""
         try:
             df = self.client.get_candles(
                 symbol=self.symbol,
@@ -389,6 +417,7 @@ class RobotoBot:
         print(f"  Max trades/dia   : {self.risk.max_trades_day}")
         print(f"  Max drawdown     : {self.risk.max_drawdown_pct}%")
         print(f"  Circuit breaker  : {self.risk.max_consecutive_losses} perdas consecutivas")
+        print(f"  Drawdown alerta  : {self.tg._drawdown_threshold:.0f}% (Telegram)")
         print(f"  Only strong      : {self.risk.only_strong}")
         print(f"  Ciclos           : {self.max_cycles or 'infinito'}")
         print(f"  Sleep            : {self.sleep_seconds}s entre ciclos")
