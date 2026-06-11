@@ -3,27 +3,32 @@
 #
 # Serviços:
 #   bot  — loop principal do robô (24/7, restart automático)
-#   api  — FastAPI REST (opcional)
+#   api  — FastAPI REST (perfil opcional, sobe separado)
 #
-# Uso rápido:
+# Pré-requisito:
 #   cp .env.example .env   # preencha as variáveis
+#
+# Subir apenas o bot (uso normal):
 #   docker compose up -d bot
 #
-# Ver logs:
+# Subir bot + API:
+#   docker compose --profile api up -d
+#
+# Ver logs em tempo real:
 #   docker compose logs -f bot
 #
-# Parar:
-#   docker compose stop bot
+# Parar tudo:
+#   docker compose down
 # ============================================================
-version: '3.9'
-
 services:
 
   # ----------------------------------------------------------
   # BOT — loop principal 24/7
   # ----------------------------------------------------------
   bot:
-    build: .
+    build:
+      context: .
+      target: bot                    # stage com FinBERT
     image: roboto-bot
     container_name: roboto-bot
     restart: unless-stopped          # reinicia após crash; para manualmente com stop
@@ -34,27 +39,28 @@ services:
       --symbol   ${DEFAULT_SYMBOL:-BTCUSDT}
       --interval ${DEFAULT_TIMEFRAME:-5m}
       --balance  ${INITIAL_BALANCE:-10000}
-      --cycles   0
-      --sleep    0
     volumes:
       - roboto_logs:/app/logs         # persiste logs entre restarts
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
-        max-file: "5"                 # mantém os 5 últimos arquivos de 10MB
+        max-file: "5"                 # mantém os 5 últimos arquivos de 10 MB
     healthcheck:
-      test: ["CMD", "python", "-c", "import backend.core.bot"]
+      test: ["CMD", "python", "-c",
+             "import sys, os; sys.exit(0 if os.path.exists('/proc/1/status') else 1)"]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s              # dá tempo para o FinBERT carregar
 
   # ----------------------------------------------------------
-  # API — FastAPI REST (opcional, só sobe se necessário)
+  # API — FastAPI REST (sobe apenas com --profile api)
   # ----------------------------------------------------------
   api:
-    build: .
+    build:
+      context: .
+      target: api                    # stage sem torch
     image: roboto-api
     container_name: roboto-api
     restart: unless-stopped
@@ -62,16 +68,24 @@ services:
       - .env
     ports:
       - "${PORT:-8000}:8000"
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
-    depends_on:
-      - bot
+    command: >
+      uvicorn backend.api.routes:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
     profiles:
-      - api                           # sobe apenas com: docker compose --profile api up
+      - api                          # sobe apenas com: docker compose --profile api up
 
 volumes:
   roboto_logs:
