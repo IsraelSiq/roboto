@@ -3,7 +3,8 @@ Roboto — FastAPI REST
 Expõe endpoints para o dashboard e integração com Supabase.
 
 Endpoints:
-    GET  /                      — health check
+    GET  /                      — health check (legado)
+    GET  /health                — liveness probe para Render / Docker HEALTHCHECK (#30)
     GET  /status                — status do bot (rodando, saldo, drawdown, finbert_loaded)
     GET  /signal                — último sinal gerado (memória)
     GET  /signals               — histórico de sinais (Supabase)
@@ -29,7 +30,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Security
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,9 +50,21 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# ----------------------------------------------------------
+# CORS (#30) — aceita origens configuradas via ALLOWED_ORIGINS
+# Ex no .env: ALLOWED_ORIGINS=https://roboto.vercel.app,http://localhost:3000
+# ----------------------------------------------------------
+
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+if _raw_origins.strip() == "*":
+    _cors_origins: List[str] = ["*"]
+else:
+    _cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_origins != ["*"],  # credentials only when origins are explicit
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -152,7 +165,6 @@ async def startup_event():
     """
     Se WARMUP_ON_STARTUP=true no .env, pré-aquece o FinBERT em background
     logo após o servidor subir. Evita latência na primeira requisição real.
-    Defina no .env: WARMUP_ON_STARTUP=true
     """
     if os.getenv("WARMUP_ON_STARTUP", "false").lower() == "true":
         logger.info("[Startup] WARMUP_ON_STARTUP=true — disparando warmup do FinBERT...")
@@ -182,6 +194,15 @@ class BotConfig(BaseModel):
 @app.get("/", tags=["Health"])
 def root():
     return {"status": "ok", "app": "Roboto API", "version": "1.0.0"}
+
+
+@app.get("/health", tags=["Health"])
+def health():
+    """
+    Liveness probe para Render, Railway, Docker HEALTHCHECK e uptime monitors. (#30)
+    Retorna 200 + JSON mínimo. Não requer autenticação.
+    """
+    return {"status": "ok", "ts": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/status", tags=["Bot"])
@@ -230,8 +251,7 @@ def get_status():
 def warmup_model():
     """
     Pré-aquece o modelo FinBERT em background (#14).
-    Retorna imediatamente — o carregamento acontece em thread separada.
-    Use GET /status para monitorar `finbert_loaded`.
+    Retorna imediatamente.
     """
     analyzer = _get_sentiment_analyzer()
     if analyzer.is_model_loaded:
@@ -251,7 +271,6 @@ def warmup_model():
 
 @app.get("/signal", tags=["Signals"])
 def get_last_signal():
-    """Último sinal gerado pelo bot (memória da sessão atual)."""
     if _last_signal is None:
         return {"signal": None, "message": "Nenhum sinal gerado ainda"}
     return _last_signal
@@ -262,7 +281,6 @@ def get_signals(
     symbol: str = Query("BTCUSDT"),
     limit: int = Query(50, ge=1, le=500),
 ):
-    """Histórico de sinais persistidos no Supabase."""
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
@@ -275,7 +293,6 @@ def get_signals(
 
 @app.get("/trades", tags=["Trades"])
 def get_trades():
-    """Trades fechados da sessão atual (memória)."""
     if _bot is None:
         return {"trades": [], "total": 0}
     trades = [
@@ -303,10 +320,6 @@ def get_trades_history(
     symbol: str = Query("BTCUSDT"),
     limit: int = Query(100, ge=1, le=500),
 ):
-    """
-    Histórico completo de trades persistidos no Supabase.
-    Retorna array direto para compatibilidade com o dashboard.
-    """
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
@@ -319,7 +332,6 @@ def get_trades_history(
 
 @app.get("/sessions", tags=["Sessions"])
 def get_sessions():
-    """Histórico de sessões do bot persistidas no Supabase."""
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
@@ -340,7 +352,6 @@ def get_sessions():
 
 @app.get("/metrics", tags=["Metrics"])
 def get_metrics():
-    """Métricas de performance da sessão atual."""
     if _bot is None or not _bot.risk.closed_trades:
         return {"metrics": None, "message": "Sem trades suficientes"}
     from backend.risk.metrics import PerformanceMetrics
@@ -365,14 +376,7 @@ def get_metrics():
 # ----------------------------------------------------------
 
 @app.get("/reports/summary", tags=["Reports"])
-def get_reports_summary(
-    symbol: str = Query("BTCUSDT"),
-):
-    """
-    Resumo geral de performance agregado dos trades no Supabase.
-    Retorna: win_rate, pnl_total, max_drawdown, sharpe_ratio, total_trades.
-    (#29)
-    """
+def get_reports_summary(symbol: str = Query("BTCUSDT")):
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
@@ -382,31 +386,23 @@ def get_reports_summary(
 
     if not closed:
         return {
-            "symbol": symbol,
-            "total_trades": 0,
-            "win_rate": None,
-            "pnl_total": None,
-            "max_drawdown": None,
-            "sharpe_ratio": None,
-            "profit_factor": None,
+            "symbol": symbol, "total_trades": 0,
+            "win_rate": None, "pnl_total": None,
+            "max_drawdown": None, "sharpe_ratio": None, "profit_factor": None,
         }
 
     wins   = sum(1 for t in closed if t["result"] == "WIN")
     losses = sum(1 for t in closed if t["result"] == "LOSS")
     total  = len(closed)
+    pnls   = [float(t["pnl_pct"] or 0) for t in closed]
 
-    pnls = [float(t["pnl_pct"] or 0) for t in closed]
-    pnl_total = round(sum(pnls), 4)
-    win_rate  = round(wins / total * 100, 2) if total else 0
-
+    pnl_total    = round(sum(pnls), 4)
+    win_rate     = round(wins / total * 100, 2) if total else 0
     gross_profit = sum(p for p in pnls if p > 0)
     gross_loss   = abs(sum(p for p in pnls if p < 0))
     profit_factor = round(gross_profit / gross_loss, 4) if gross_loss > 0 else None
 
-    # Max drawdown a partir da curva de equity acumulada
-    equity = 0.0
-    peak   = 0.0
-    max_dd = 0.0
+    equity = peak = max_dd = 0.0
     for p in pnls:
         equity += p
         if equity > peak:
@@ -416,7 +412,6 @@ def get_reports_summary(
             max_dd = dd
     max_dd = round(max_dd, 4)
 
-    # Sharpe simplificado (retorno médio / desvio padrão, ann=252)
     import statistics
     sharpe = None
     if len(pnls) >= 2:
@@ -428,14 +423,10 @@ def get_reports_summary(
             pass
 
     return {
-        "symbol":        symbol,
-        "total_trades":  total,
-        "wins":          wins,
-        "losses":        losses,
-        "win_rate":      win_rate,
-        "pnl_total":     pnl_total,
-        "max_drawdown":  max_dd,
-        "sharpe_ratio":  sharpe,
+        "symbol": symbol, "total_trades": total,
+        "wins": wins, "losses": losses,
+        "win_rate": win_rate, "pnl_total": pnl_total,
+        "max_drawdown": max_dd, "sharpe_ratio": sharpe,
         "profit_factor": profit_factor,
     }
 
@@ -443,26 +434,18 @@ def get_reports_summary(
 @app.get("/reports/trades", tags=["Reports"])
 def get_reports_trades(
     symbol:    str           = Query("BTCUSDT"),
-    result:    Optional[str] = Query(None, description="WIN | LOSS | PENDING"),
-    date_from: Optional[str] = Query(None, description="ISO date, ex: 2026-01-01"),
-    date_to:   Optional[str] = Query(None, description="ISO date, ex: 2026-12-31"),
+    result:    Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to:   Optional[str] = Query(None),
     page:      int           = Query(1, ge=1),
     per_page:  int           = Query(20, ge=1, le=100),
 ):
-    """
-    Histórico paginado de trades com filtros opcionais.
-    Filtros: symbol, result (WIN/LOSS/PENDING), date_from, date_to.
-    Paginação: page + per_page.
-    (#29)
-    """
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
 
     all_trades = db.get_trades(symbol=symbol, limit=500)
-
-    # Filtros client-side (Supabase free tier não requer RPC)
-    filtered = all_trades
+    filtered   = all_trades
 
     if result:
         filtered = [t for t in filtered if t.get("result") == result.upper()]
@@ -489,40 +472,25 @@ def get_reports_trades(
         except ValueError:
             pass
 
-    total = len(filtered)
-    start = (page - 1) * per_page
-    end   = start + per_page
-    page_data = filtered[start:end]
+    total     = len(filtered)
+    start     = (page - 1) * per_page
+    page_data = filtered[start:start + per_page]
 
     return {
-        "trades":      page_data,
-        "total":       total,
-        "page":        page,
-        "per_page":    per_page,
-        "total_pages": max(1, -(-total // per_page)),  # ceil division
+        "trades": page_data, "total": total,
+        "page": page, "per_page": per_page,
+        "total_pages": max(1, -(-total // per_page)),
     }
 
 
 @app.get("/reports/export/csv", tags=["Reports"])
-def export_trades_csv(
-    symbol: str = Query("BTCUSDT"),
-):
-    """
-    Exporta todos os trades do símbolo para download CSV.
-    Retorna StreamingResponse com Content-Disposition: attachment.
-    (#29)
-    """
+def export_trades_csv(symbol: str = Query("BTCUSDT")):
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
 
     trades = db.get_trades(symbol=symbol, limit=500)
-
-    cols = [
-        "id", "symbol", "direction", "strength",
-        "entry_price", "exit_price", "pnl_pct",
-        "result", "created_at", "closed_at",
-    ]
+    cols   = ["id","symbol","direction","strength","entry_price","exit_price","pnl_pct","result","created_at","closed_at"]
 
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
@@ -540,25 +508,14 @@ def export_trades_csv(
 
 
 @app.get("/reports/equity-curve", tags=["Reports"])
-def get_equity_curve(
-    symbol: str = Query("BTCUSDT"),
-):
-    """
-    Série temporal para o gráfico de equity curve.
-    Retorna lista de pontos [{ts, equity, pnl_pct}] ordenada por data.
-    (#29)
-    """
+def get_equity_curve(symbol: str = Query("BTCUSDT")):
     db = _get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="Supabase indisponível")
 
     trades = db.get_trades(symbol=symbol, limit=500)
-    closed = [
-        t for t in trades
-        if t.get("result") in ("WIN", "LOSS") and t.get("pnl_pct") is not None
-    ]
+    closed = [t for t in trades if t.get("result") in ("WIN","LOSS") and t.get("pnl_pct") is not None]
 
-    # Ordena do mais antigo para o mais recente
     try:
         closed.sort(key=lambda t: t.get("created_at") or "")
     except Exception:
@@ -569,11 +526,7 @@ def get_equity_curve(
     for t in closed:
         pnl = float(t["pnl_pct"])
         equity += pnl
-        points.append({
-            "ts":      t.get("closed_at") or t.get("created_at"),
-            "equity":  round(equity, 4),
-            "pnl_pct": round(pnl, 4),
-        })
+        points.append({"ts": t.get("closed_at") or t.get("created_at"), "equity": round(equity, 4), "pnl_pct": round(pnl, 4)})
 
     return {"symbol": symbol, "points": points, "total": len(points)}
 
@@ -584,12 +537,11 @@ def get_equity_curve(
 
 @app.get("/candles", tags=["Market"])
 def get_candles(symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100):
-    """Últimos candles do símbolo."""
     try:
         df = _get_client().get_candles(symbol=symbol, interval=interval, limit=limit)
         if df.empty:
             raise HTTPException(status_code=502, detail="Nenhum candle recebido da Binance")
-        df_out = df[["open_time", "open", "high", "low", "close", "volume"]].tail(50).copy()
+        df_out = df[["open_time","open","high","low","close","volume"]].tail(50).copy()
         df_out["open_time"] = df_out["open_time"].astype(str)
         return {"candles": df_out.to_dict(orient="records"), "symbol": symbol, "interval": interval}
     except HTTPException:
@@ -601,7 +553,6 @@ def get_candles(symbol: str = "BTCUSDT", interval: str = "5m", limit: int = 100)
 
 @app.get("/price", tags=["Market"])
 def get_price(symbol: str = "BTCUSDT"):
-    """Preço atual do símbolo."""
     try:
         price = _get_client().get_price(symbol=symbol)
         return {"symbol": symbol, "price": price}
@@ -614,11 +565,7 @@ def get_price(symbol: str = "BTCUSDT"):
 # ----------------------------------------------------------
 
 @app.post("/bot/start", tags=["Bot"])
-def start_bot(
-    config: BotConfig,
-    _: None = Depends(verify_token),
-):
-    """Inicia o loop do bot em background."""
+def start_bot(config: BotConfig, _: None = Depends(verify_token)):
     global _bot, _bot_thread
     if _bot and _bot._running:
         return {"status": "already_running", "symbol": _bot.symbol}
@@ -637,7 +584,6 @@ def start_bot(
 
 @app.post("/bot/stop", tags=["Bot"])
 def stop_bot(_: None = Depends(verify_token)):
-    """Para o loop do bot."""
     if _bot is None or not _bot._running:
         return {"status": "not_running"}
     _bot.stop()
@@ -646,7 +592,6 @@ def stop_bot(_: None = Depends(verify_token)):
 
 @app.post("/bot/resume", tags=["Bot"])
 def resume_bot(_: None = Depends(verify_token)):
-    """Retoma o bot após pausa por drawdown."""
     if _bot is None:
         return {"status": "no_bot"}
     _bot.risk.resume()

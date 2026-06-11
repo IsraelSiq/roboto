@@ -1,0 +1,123 @@
+# ============================================================
+# Deploy Backend (#30)
+#
+# Suporta 2 modos de deploy (configure via secret DEPLOY_MODE):
+#
+# Modo A — Render (recomendado para free tier):
+#   Secrets necessários: RENDER_DEPLOY_HOOK
+#   Como obter: Render dashboard > seu service > Settings > Deploy Hook
+#
+# Modo B — VPS via SSH + Docker:
+#   Secrets necessários: DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY
+#   O servidor deve ter Docker instalado e acesso ao GHCR.
+# ============================================================
+
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'requirements*.txt'
+      - 'Dockerfile'
+  workflow_dispatch:
+
+jobs:
+  # ----------------------------------------------------------
+  # Build Docker image e push para GitHub Container Registry
+  # ----------------------------------------------------------
+  build:
+    name: Build & Push Docker (GHCR)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/roboto-api
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push (stage api — sem torch)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: api
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ----------------------------------------------------------
+  # Deploy via Render webhook (Modo A)
+  # ----------------------------------------------------------
+  deploy-render:
+    name: Trigger Render Deploy
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ vars.DEPLOY_MODE == 'render' || vars.DEPLOY_MODE == '' }}
+
+    steps:
+      - name: Trigger Render deploy hook
+        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}")
+          echo "Render webhook status: $STATUS"
+          if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+            echo "::warning::Render webhook retornou $STATUS. Verifique o dashboard do Render."
+          fi
+
+      - name: Skip (secret não configurado)
+        if: ${{ secrets.RENDER_DEPLOY_HOOK == '' }}
+        run: echo "RENDER_DEPLOY_HOOK não configurado — deploy manual necessário."
+
+  # ----------------------------------------------------------
+  # Deploy via SSH + Docker pull (Modo B — VPS)
+  # ----------------------------------------------------------
+  deploy-vps:
+    name: Deploy via SSH (VPS)
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ vars.DEPLOY_MODE == 'vps' }}
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key:      ${{ secrets.DEPLOY_KEY }}
+          script: |
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ghcr.io/${{ github.repository }}/roboto-api:latest
+            docker stop roboto-api 2>/dev/null || true
+            docker rm   roboto-api 2>/dev/null || true
+            docker run -d \
+              --name roboto-api \
+              --restart unless-stopped \
+              -p 8000:8000 \
+              --env-file /etc/roboto/.env \
+              ghcr.io/${{ github.repository }}/roboto-api:latest
+            echo "Deploy concluído ✅"
