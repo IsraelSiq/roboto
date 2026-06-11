@@ -1,6 +1,6 @@
 """
 tests/test_signals.py
-Testes unitários do SignalCombiner — tabela de decisão,
+Testes unitários do SignalCombiner — foco em tabela de decisão,
 breakdown de scores e diagnóstico de fallback (issues #9 e #5).
 """
 
@@ -27,7 +27,6 @@ def make_tech(signal: str, rsi: float = 55.0, price: float = 90000.0) -> Technic
         bb_upper=92000.0,
         bb_lower=88000.0,
     )
-
 
 def make_sent(
     signal: str,
@@ -63,7 +62,7 @@ def combiner():
 ])
 def test_tabela_decisao_completa(combiner, tech, sent, expected):
     d = combiner.combine(make_tech(tech), make_sent(sent))
-    assert d.final == expected
+    assert d.final == expected, f"CALL={tech} SENT={sent}: esperado {expected}, obtido {d.final}"
 
 
 def test_confianca_call_forte_maior_que_call_fraco(combiner):
@@ -71,11 +70,9 @@ def test_confianca_call_forte_maior_que_call_fraco(combiner):
     d_fraco = combiner.combine(make_tech("CALL"), make_sent("neutral",  score=0.90))
     assert d_forte.confidence > d_fraco.confidence
 
-
 def test_confianca_aguardar_e_zero(combiner):
     d = combiner.combine(make_tech("AGUARDAR"), make_sent("positive"))
     assert d.confidence == 0.0
-
 
 def test_confianca_maximo_1_0(combiner):
     d = combiner.combine(make_tech("CALL"), make_sent("positive", score=1.0))
@@ -87,16 +84,13 @@ def test_decision_expoe_sentiment_raw(combiner):
     d = combiner.combine(make_tech("CALL"), make_sent("positive", raw=raw))
     assert d.sentiment_raw == raw
 
-
 def test_decision_expoe_sentiment_source(combiner):
     d = combiner.combine(make_tech("CALL"), make_sent("positive", source="finbert"))
     assert d.sentiment_source == "finbert"
 
-
 def test_decision_expoe_sentiment_source_fallback(combiner):
     d = combiner.combine(make_tech("CALL"), make_sent("neutral", source="fallback_newsapi_error"))
     assert d.sentiment_source == "fallback_newsapi_error"
-
 
 def test_decision_expoe_sentiment_reason(combiner):
     sent = make_sent("positive")
@@ -115,12 +109,10 @@ def test_debug_breakdown_contem_componentes(combiner):
     assert "Sentiment" in breakdown
     assert "Decisão" in breakdown
 
-
 def test_debug_breakdown_sinaliza_fallback(combiner):
     d = combiner.combine(make_tech("CALL"), make_sent("neutral", source="fallback_newsapi_error"))
     breakdown = d.debug_breakdown()
     assert "FALLBACK" in breakdown
-
 
 def test_debug_breakdown_sem_fallback_quando_finbert_ok(combiner):
     d = combiner.combine(make_tech("CALL"), make_sent("positive", source="finbert"))
@@ -136,7 +128,6 @@ def test_warning_emitido_quando_source_e_fallback(combiner, caplog):
         )
     assert any("FALLBACK" in r.message for r in caplog.records)
 
-
 def test_sem_warning_quando_source_e_finbert(combiner, caplog):
     with caplog.at_level(logging.WARNING, logger="backend.analysis.signals"):
         combiner.combine(
@@ -151,12 +142,10 @@ def test_only_strong_rebaixa_call_fraco(combiner):
     d = combiner.combine(make_tech("CALL"), make_sent("neutral"))
     assert d.final == AGUARDAR
 
-
 def test_only_strong_mantem_call_forte(combiner):
     combiner.only_strong = True
     d = combiner.combine(make_tech("CALL"), make_sent("positive"))
     assert d.final == CALL_FORTE
-
 
 def test_only_strong_mantem_put_forte(combiner):
     combiner.only_strong = True
