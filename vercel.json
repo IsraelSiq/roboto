@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "framework": null,
+  "buildCommand": "",
+  "outputDirectory": "frontend",
+  "routes": [
+    {
+      "src": "/reports",
+      "dest": "/reports.html"
+    },
+    {
+      "src": "/(.*)\\.html",
+      "dest": "/$1.html",
+      "headers": { "Cache-Control": "no-store" }
+    },
+    {
+      "src": "/static/(.*)",
+      "dest": "/static/$1",
+      "headers": { "Cache-Control": "public, max-age=31536000, immutable" }
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ]
+}
