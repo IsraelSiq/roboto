@@ -87,9 +87,10 @@
 <header>
   <span style="font-size:1.5rem">📊</span>
   <h1>Roboto — Relatórios</h1>
-  <a href="/" class="nav-link">Dashboard</a>
-  <a href="/reports" class="nav-link active">📊 Relatórios</a>
-  <a href="/control" class="nav-link">⚙️ Controle</a>
+  <a href="/dashboard/"             class="nav-link">Dashboard</a>
+  <a href="/dashboard/reports.html" class="nav-link active">📊 Relatórios</a>
+  <a href="/dashboard/control.html" class="nav-link">⚙️ Controle</a>
+  <a href="/dashboard/backtest.html" class="nav-link">🧠 Backtest</a>
 </header>
 
 <div class="grid" id="summary-cards">
@@ -142,7 +143,7 @@
 </section>
 
 <script>
-  const API = (window.API_URL || 'https://roboto-tau3.onrender.com').replace(/\/$/, '');
+  const API = (window.API_URL || 'http://localhost:8000').replace(/\/$/, '');
   let currentPage = 1, totalPages = 1, currentSym = 'BTCUSDT';
 
   function fmt(v, d=2) { if (v==null||v==='') return '—'; return Number(v).toFixed(d); }

@@ -50,7 +50,6 @@
     }
     .panel-body { padding: 20px; }
 
-    /* Status card */
     .status-row {
       display: flex; align-items: center; gap: 10px;
       margin-bottom: 16px;
@@ -85,7 +84,6 @@
     }
     .open-trade strong { color: #fff; }
 
-    /* Botooes */
     .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
     .btn {
       flex: 1; min-width: 90px;
@@ -102,7 +100,6 @@
     .btn-resume  { background: #78350f; color: #fcd34d; border: 1px solid #92400e; }
     .btn-refresh { background: #1e2130; color: #aaa;    border: 1px solid #2a2d3a; }
 
-    /* Formulario */
     .form-group { margin-bottom: 14px; }
     .form-group label {
       display: block; font-size: 0.75rem;
@@ -124,29 +121,21 @@
     .form-group input:focus,
     .form-group select:focus { border-color: #7c3aed; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-
-    .form-group input[type="checkbox"] {
-      width: auto; margin-right: 6px;
-    }
+    .form-group input[type="checkbox"] { width: auto; margin-right: 6px; }
     .checkbox-label {
       display: flex; align-items: center;
       font-size: 0.85rem; color: #ccc; cursor: pointer;
     }
 
-    /* Token */
-    .token-row {
-      display: flex; gap: 8px;
-    }
+    .token-row { display: flex; gap: 8px; }
     .token-row input { flex: 1; }
     .token-row button {
       background: #1e2130; color: #aaa;
       border: 1px solid #2a2d3a; border-radius: 6px;
-      padding: 8px 12px; font-size: 0.8rem;
-      cursor: pointer;
+      padding: 8px 12px; font-size: 0.8rem; cursor: pointer;
     }
     .token-row button:hover { background: #2a2d3a; }
 
-    /* Log */
     .log {
       background: #0a0c14;
       border: 1px solid #1e2130;
@@ -165,7 +154,6 @@
     .log .info { color: #7c3aed; }
     .log .ts   { color: #444; margin-right: 6px; }
 
-    /* Toast */
     #toast {
       position: fixed; bottom: 24px; right: 24px;
       padding: 12px 18px; border-radius: 8px;
@@ -186,16 +174,15 @@
 <header>
   <span style="font-size:1.5rem">🤖</span>
   <h1>Roboto — Controle</h1>
-  <a href="/" class="nav-link">Dashboard</a>
-  <a href="/reports" class="nav-link">📊 Relatórios</a>
-  <a href="/control" class="nav-link active">⚙️ Controle</a>
+  <a href="/dashboard/"             class="nav-link">Dashboard</a>
+  <a href="/dashboard/reports.html" class="nav-link">📊 Relatórios</a>
+  <a href="/dashboard/control.html" class="nav-link active">⚙️ Controle</a>
+  <a href="/dashboard/backtest.html" class="nav-link">🧠 Backtest</a>
 </header>
 
 <div class="layout">
 
-  <!-- Coluna esquerda: Status + Controles -->
   <div>
-    <!-- Status do bot -->
     <div class="panel" style="margin-bottom:20px">
       <div class="panel-header">📊 Status do Bot</div>
       <div class="panel-body">
@@ -203,43 +190,24 @@
           <span id="status-badge" class="badge offline">⏳ Carregando...</span>
           <span id="status-symbol" style="color:#555;font-size:0.82rem"></span>
         </div>
-
         <div class="stat-grid">
-          <div class="stat">
-            <div class="lbl">Saldo</div>
-            <div class="val" id="s-balance">—</div>
-          </div>
-          <div class="stat">
-            <div class="lbl">Drawdown</div>
-            <div class="val" id="s-drawdown">—</div>
-          </div>
-          <div class="stat">
-            <div class="lbl">Trades Hoje</div>
-            <div class="val" id="s-trades-today">—</div>
-          </div>
-          <div class="stat">
-            <div class="lbl">Total Trades</div>
-            <div class="val" id="s-trades-total">—</div>
-          </div>
+          <div class="stat"><div class="lbl">Saldo</div><div class="val" id="s-balance">—</div></div>
+          <div class="stat"><div class="lbl">Drawdown</div><div class="val" id="s-drawdown">—</div></div>
+          <div class="stat"><div class="lbl">Trades Hoje</div><div class="val" id="s-trades-today">—</div></div>
+          <div class="stat"><div class="lbl">Total Trades</div><div class="val" id="s-trades-total">—</div></div>
         </div>
-
         <div id="open-trade-card" class="open-trade" style="display:none">
-          <strong>Trade aberto:</strong>
-          <span id="ot-info"></span>
+          <strong>Trade aberto:</strong> <span id="ot-info"></span>
         </div>
-
         <div class="btn-row">
           <button class="btn btn-start"   id="btn-start"   onclick="startBot()">&#9654; Start</button>
           <button class="btn btn-stop"    id="btn-stop"    onclick="stopBot()">&#9632; Stop</button>
           <button class="btn btn-resume"  id="btn-resume"  onclick="resumeBot()">↺ Resume</button>
           <button class="btn btn-refresh" onclick="loadStatus()">🔄</button>
         </div>
-
         <div style="font-size:0.72rem;color:#555">Atualiza em <span id="countdown">15</span>s</div>
       </div>
     </div>
-
-    <!-- Log -->
     <div class="panel">
       <div class="panel-header">📝 Log de Operações</div>
       <div class="panel-body" style="padding:12px">
@@ -248,13 +216,10 @@
     </div>
   </div>
 
-  <!-- Coluna direita: Configuracao + Token -->
   <div>
     <div class="panel">
       <div class="panel-header">⚙️ Configuração do Bot</div>
       <div class="panel-body">
-
-        <!-- API Token -->
         <div class="form-group">
           <label>API Token (Bearer)</label>
           <div class="token-row">
@@ -263,9 +228,7 @@
           </div>
           <div style="font-size:0.7rem;color:#555;margin-top:4px">Salvo localmente no browser</div>
         </div>
-
         <hr style="border-color:#2a2d3a;margin:16px 0" />
-
         <div class="form-row">
           <div class="form-group">
             <label>Símbolo</label>
@@ -288,12 +251,10 @@
             </select>
           </div>
         </div>
-
         <div class="form-group">
           <label>Saldo Inicial (USDT)</label>
           <input type="number" id="cfg-balance" value="10000" min="100" step="100" />
         </div>
-
         <div class="form-row">
           <div class="form-group">
             <label>Máx Ciclos (0 = ∞)</label>
@@ -304,23 +265,16 @@
             <input type="number" id="cfg-sleep" value="300" min="10" />
           </div>
         </div>
-
         <div class="form-group">
           <label class="checkbox-label">
             <input type="checkbox" id="cfg-only-strong" checked />
             Only Strong (só sinais fortes)
           </label>
         </div>
-
         <div class="btn-row" style="margin-top:8px">
-          <button class="btn btn-start" style="font-size:0.85rem" onclick="startBot()">
-            &#9654; Iniciar com esta config
-          </button>
+          <button class="btn btn-start" style="font-size:0.85rem" onclick="startBot()">&#9654; Iniciar com esta config</button>
         </div>
-
-        <div style="font-size:0.7rem;color:#555;margin-top:8px">
-          Config salva automaticamente no browser (localStorage)
-        </div>
+        <div style="font-size:0.7rem;color:#555;margin-top:8px">Config salva automaticamente no browser (localStorage)</div>
       </div>
     </div>
   </div>
@@ -330,9 +284,8 @@
 <div id="toast"></div>
 
 <script>
-  const API = (window.API_URL || 'https://roboto-tau3.onrender.com').replace(/\/$/, '');
+  const API = (window.API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
-  // ---- Persistencia local ----
   function loadLocal() {
     const cfg = JSON.parse(localStorage.getItem('roboto_cfg') || '{}');
     if (cfg.symbol)      document.getElementById('cfg-symbol').value      = cfg.symbol;
@@ -364,11 +317,8 @@
     log('info', 'Token atualizado e salvo localmente');
   }
 
-  function getToken() {
-    return localStorage.getItem('roboto_token') || '';
-  }
+  function getToken() { return localStorage.getItem('roboto_token') || ''; }
 
-  // ---- Log ----
   function log(type, msg) {
     const el = document.getElementById('log');
     const ts = new Date().toLocaleTimeString('pt-BR');
@@ -378,7 +328,6 @@
     el.scrollTop = el.scrollHeight;
   }
 
-  // ---- Toast ----
   let _tt = null;
   function showToast(msg, type = 'ok') {
     const el = document.getElementById('toast');
@@ -389,12 +338,10 @@
     _tt = setTimeout(() => { el.style.display = 'none'; }, 4000);
   }
 
-  // ---- Status ----
   async function loadStatus() {
     try {
       const st = await fetch(`${API}/status`).then(r => r.json());
       const badge = document.getElementById('status-badge');
-
       if (st.running) {
         badge.textContent = '🟢 Rodando'; badge.className = 'badge running';
         document.getElementById('btn-start').disabled  = true;
@@ -411,22 +358,17 @@
         document.getElementById('btn-stop').disabled   = true;
         document.getElementById('btn-resume').disabled = true;
       }
-
       const sym = st.symbol ? `${st.symbol} ${st.interval || ''}` : '';
       document.getElementById('status-symbol').textContent = sym;
-
       const bal = document.getElementById('s-balance');
       bal.textContent = st.balance != null
         ? `$${Number(st.balance).toLocaleString('pt-BR', {minimumFractionDigits:2})}` : '—';
-
       const dd = document.getElementById('s-drawdown');
       const ddv = st.drawdown_pct;
       dd.textContent = ddv != null ? `${Number(ddv).toFixed(2)}%` : '—';
       dd.className = 'val ' + (ddv > 10 ? 'red' : ddv > 5 ? 'yellow' : 'green');
-
       document.getElementById('s-trades-today').textContent = st.trades_today ?? '—';
       document.getElementById('s-trades-total').textContent = st.total_trades  ?? '—';
-
       const otCard = document.getElementById('open-trade-card');
       const otInfo = document.getElementById('ot-info');
       if (st.open_trade) {
@@ -447,7 +389,6 @@
     }
   }
 
-  // ---- Acoes do bot ----
   async function botAction(method, endpoint, body = null) {
     const token = getToken();
     if (!token) {
@@ -458,19 +399,14 @@
     try {
       const opts = {
         method,
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       };
       if (body) opts.body = JSON.stringify(body);
       const res  = await fetch(`${API}${endpoint}`, opts);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || res.statusText);
       return data;
-    } catch(e) {
-      throw e;
-    }
+    } catch(e) { throw e; }
   }
 
   async function startBot() {
@@ -523,12 +459,10 @@
     }
   }
 
-  // ---- Countdown e auto-refresh ----
   let timer = 15;
   loadLocal();
   loadStatus();
   log('info', `Painel de controle iniciado — API: ${API}`);
-
   setInterval(loadStatus, 15_000);
   setInterval(() => {
     timer--;
@@ -536,8 +470,6 @@
     if (el) el.textContent = timer;
     if (timer <= 0) timer = 15;
   }, 1000);
-
-  // Salva config automaticamente ao mudar
   ['cfg-symbol','cfg-interval','cfg-balance','cfg-cycles','cfg-sleep','cfg-only-strong']
     .forEach(id => {
       const el = document.getElementById(id);
