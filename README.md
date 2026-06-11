@@ -81,7 +81,7 @@ Após subir a API, acesse pelo browser:
 |---|---|---|
 | Dashboard | http://localhost:8000/dashboard/ | Sinais em tempo real + trades |
 | Relatórios | http://localhost:8000/dashboard/reports.html | Equity curve, win rate, exportar CSV |
-| Controle | http://localhost:8000/dashboard/control.html | Start/stop/config do bot |
+| Controle | http://localhost:8000/dashboard/control.html | Start/stop/config do bot + API Token |
 | Backtest | http://localhost:8000/dashboard/backtest.html | Simulação histórica interativa |
 | Swagger | http://localhost:8000/docs | Documentação interativa da API |
 
@@ -97,14 +97,16 @@ Após subir a API, acesse pelo browser:
 | `SUPABASE_URL` | URL do projeto Supabase | ✅ |
 | `SUPABASE_KEY` | Service role key | ✅ |
 | `NEWSAPI_KEY` | NewsAPI key | ✅ |
-| `API_TOKEN` | Bearer token para /bot/* | recomendado |
-| `ALLOWED_ORIGINS` | CORS origins (CSV) | recomendado |
+| `API_TOKEN` | Bearer token para /bot/\* e /backtest/run | ✅ |
+| `ALLOWED_ORIGINS` | CORS origins (CSV). Ex: `https://meusite.vercel.app` | ✅ |
 | `TELEGRAM_TOKEN` | Token do bot Telegram | opcional |
 | `TELEGRAM_CHAT_ID` | Chat ID do Telegram | opcional |
 | `DRAWDOWN_ALERT_PCT` | Threshold drawdown alerta (padrão: 10) | opcional |
 | `WARMUP_ON_STARTUP` | Pré-aquece FinBERT no startup | opcional |
 | `LOG_FORMAT` | `json` para log estruturado | opcional |
 | `WEB_CONCURRENCY` | Workers uvicorn (padrão: 1) | opcional |
+
+> ⚠️ Sem `API_TOKEN` o painel de Controle não consegue autenticar. Sem `ALLOWED_ORIGINS` o browser bloqueia todas as requisições do dashboard.
 
 ---
 
@@ -135,6 +137,8 @@ Após subir a API, acesse pelo browser:
 | POST | `/bot/resume` | Retomar bot pausado |
 | POST | `/backtest/run` | Rodar backtest |
 
+> O token é definido em `.env` como `API_TOKEN=seu_token`. No painel de Controle, cole o mesmo valor no campo **API Token** e clique em 💾 Salvar.
+
 ---
 
 ## Backtest
@@ -150,7 +154,8 @@ O backtest simula a estratégia candle a candle usando dados históricos reais d
 | `start` | Data inicial (YYYY-MM-DD) | `2026-01-01` |
 | `end` | Data final (opcional) | hoje |
 | `balance` | Saldo inicial em USDT | `10000` |
-| `only_strong` | Só sinais fortes (CALL_FORTE/PUT_FORTE) | `true` |
+| `sentiment_mode` | `both`, `positive`, `negative`, `neutral` | `both` |
+| `only_strong` | Só sinais fortes (CALL\_FORTE/PUT\_FORTE) | `true` |
 | `use_atr_stop` | Stop loss dinâmico por ATR | `false` |
 | `atr_multiplier` | Multiplicador ATR para SL | `1.5` |
 | `rr_ratio` | Risk:Reward ratio | `2.0` |
@@ -158,6 +163,26 @@ O backtest simula a estratégia candle a candle usando dados históricos reais d
 | `save` | Salvar resultado no Supabase | `true` |
 
 **Métricas retornadas:** win rate, sharpe ratio, max drawdown, profit factor, PnL total, equity curve, lista de trades simulados, veredicto APROVADO/REPROVADO.
+
+**Critérios de aprovação:**
+
+| Métrica | Meta |
+|---|---|
+| Win Rate | ≥ 50% |
+| Sharpe Ratio | > 0.5 |
+| Max Drawdown | < 25% |
+| Profit Factor | > 1.1 |
+
+**Exemplo de resultado (BTCUSDT 5m, Mai–Jun 2026):**
+```
+final_balance : 11.787 USDT  (+17,18%)
+total_trades  : 106
+win_rate      : 40,57%
+profit_factor : 1,34
+max_drawdown  : 5,56%
+sharpe_ratio  : 1,42
+approved      : true  (3/4 critérios)
+```
 
 ---
 
