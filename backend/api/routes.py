@@ -23,6 +23,8 @@ Endpoints:
     POST /bot/start             — inicia bot [Bearer token]
     POST /bot/stop              — para bot  [Bearer token]
     POST /bot/resume            — retoma bot [Bearer token]
+    POST /backtest/run          — roda backtest offline (#2)
+    GET  /backtest/history      — histórico de backtest runs (#2)
 """
 
 import csv
@@ -42,6 +44,7 @@ from pydantic import BaseModel
 
 from backend.core.bot import RobotoBot
 from backend.market.binance_client import BinanceClient
+from backend.api.backtest_router import router as backtest_router
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +102,12 @@ app.add_middleware(
 _frontend_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
 if os.path.isdir(_frontend_path):
     app.mount("/dashboard", StaticFiles(directory=_frontend_path, html=True), name="dashboard")
+
+# ----------------------------------------------------------
+# ROUTERS
+# ----------------------------------------------------------
+
+app.include_router(backtest_router)  # POST /backtest/run, GET /backtest/history (#2)
 
 # ----------------------------------------------------------
 # AUTH
