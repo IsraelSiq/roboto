@@ -4,8 +4,8 @@
 # Dispara no push para main (apenas se frontend/ mudar).
 # Requer secrets no repositório:
 #   VERCEL_TOKEN       — token de API do Vercel (Account Settings > Tokens)
-#   VERCEL_ORG_ID      — Team/Personal account ID (vercel.json ou `vercel link`)
-#   VERCEL_PROJECT_ID  — ID do projeto Vercel (vercel.json ou `vercel link`)
+#   VERCEL_ORG_ID      — Team/Personal account ID
+#   VERCEL_PROJECT_ID  — ID do projeto Vercel
 # ============================================================
 
 name: Deploy Frontend (Vercel)
@@ -15,6 +15,7 @@ on:
     branches: [main]
     paths:
       - 'frontend/**'
+      - 'vercel.json'
   workflow_dispatch:
 
 jobs:
@@ -35,21 +36,18 @@ jobs:
         run: npm install -g vercel@latest
 
       - name: Pull Vercel environment
-        working-directory: frontend
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID:     ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Build
-        working-directory: frontend
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID:     ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Deploy to Vercel
-        working-directory: frontend
         run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID:     ${{ secrets.VERCEL_ORG_ID }}
