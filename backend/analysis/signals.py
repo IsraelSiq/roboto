@@ -16,12 +16,7 @@ AGUARDAR = "AGUARDAR"
 
 @dataclass
 class SignalDecision:
-    """Decisão combinada técnico + sentimento, compatível com testes.
-
-    Os testes constroem SignalDecision tanto via combine() quanto diretamente
-    com kwargs como technical_signal, sentiment_signal, symbol, current_price,
-    atr, etc. Campos extras são aceitos e armazenados em attrs.
-    """
+    """Decisão combinada técnico + sentimento, compatível com testes."""
 
     final: str
     confidence: float = 0.0
@@ -37,6 +32,7 @@ class SignalDecision:
     symbol: Optional[str] = None
     current_price: Optional[float] = None
     atr: Optional[float] = None
+    reason: str = ""
 
     def __post_init__(self):
         # Se tech foi passado mas atr não, tenta extrair de tech
@@ -133,39 +129,3 @@ class SignalCombiner:
             atr=tech.atr,
         )
         return decision
-
-
-# Compatibilidade mínima com o antigo gerador de sinais voltado só para técnico
-
-@dataclass
-class Signal:
-    symbol: str
-    direction: int
-    strength: str
-    reason: str
-
-
-class SignalGenerator:
-    def __init__(self, symbol: str = "BTCUSDT"):
-        self.symbol = symbol
-
-    def generate(self, df):
-        from backend.analysis.technical import TechnicalAnalysis
-
-        df = TechnicalAnalysis.generate_signal(df.copy())
-        signals: list[Signal] = []
-        for _, row in df.iterrows():
-            if row.get("signal", 0) == 0:
-                continue
-            direction = int(row["signal"])
-            strength = row.get("strength", "weak")
-            reason = "technical"
-            signals.append(
-                Signal(
-                    symbol=self.symbol,
-                    direction=direction,
-                    strength=strength,
-                    reason=reason,
-                )
-            )
-        return signals

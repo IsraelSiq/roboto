@@ -11,15 +11,15 @@ logger = logging.getLogger(__name__)
 class TechnicalResult:
     signal: str
     reason: str
-    rsi: float | None
-    current_price: float | None
-    ema50: float | None
-    macd: float | None
-    macd_signal: float | None
-    bb_upper: float | None
-    bb_lower: float | None
-    atr: float | None
-    price_vs_ema: str | None
+    rsi: float | None = None
+    current_price: float | None = None
+    ema50: float | None = None
+    macd: float | None = None
+    macd_signal: float | None = None
+    bb_upper: float | None = None
+    bb_lower: float | None = None
+    atr: float | None = None
+    price_vs_ema: str | None = None
 
 
 class TechnicalAnalysis:
