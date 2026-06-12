@@ -1,15 +1,15 @@
 """
 Roboto — Bot Principal
 Loop automático que une todos os módulos:
-    Binance → Técnico → Macro → Sentiment → Sinal → RiskManager → Trade → Métricas
-    + Supabase para persistência de sinais, trades e sessões
+    Binance → Técnico → Macro → Sentiment → NewsImpact → Sinal → RiskManager → Trade → Métricas
+    + Supabase para persistência de sinais, trades, sessões e impacto de notícias
     + Telegram para alertas de startup, shutdown, circuit breaker, trades e drawdown
 
 Uso:
     python -m backend.core.bot
-    python -m backend.core.bot --symbol ETHUSDT --interval 1m --cycles 5
+    python -m backend.core.bot --symbol BNBUSDT --interval 5m --cycles 5
     python -m backend.core.bot --no-macro
-    python -m backend.core.bot --macro-tf 4h
+    python -m backend.core.bot --no-impact      # desativa NewsImpactCollector
     python -m backend.core.bot --atr-mult 2.0 --rr 2.5
 """
 
@@ -52,7 +52,7 @@ class RobotoBot:
     Orquestra o ciclo completo de operação do robô.
 
     Args:
-        symbol:                 Par de moedas (padrão: BTCUSDT)
+        symbol:                 Par de moedas (padrão: BNBUSDT)
         interval:               Timeframe dos candles (padrão: 5m)
         candle_limit:           Qtd de candles para análise técnica (padrão: 100)
         balance:                Saldo inicial simulado em USDT (padrão: 10000.0)
@@ -67,11 +67,12 @@ class RobotoBot:
         rr_ratio:               Razão Risco:Recompensa para TP (padrão: 2.0)
         macro_filter_enabled:   Ativa filtro de tendência macro (padrão: True)
         macro_timeframe:        Timeframe do filtro macro (padrão: '1h')
+        impact_collector_enabled: Ativa coleta de impacto histórico de notícias (padrão: True)
     """
 
     def __init__(
         self,
-        symbol: str = "BTCUSDT",
+        symbol: str = "BNBUSDT",
         interval: str = "5m",
         candle_limit: int = 100,
         balance: float = 10000.0,
@@ -86,6 +87,7 @@ class RobotoBot:
         rr_ratio: float = 2.0,
         macro_filter_enabled: bool = True,
         macro_timeframe: str = "1h",
+        impact_collector_enabled: bool = True,
     ):
         self.symbol = symbol
         self.interval = interval
@@ -93,9 +95,10 @@ class RobotoBot:
         self.max_cycles = max_cycles
         # fix: sleep_seconds=0 deve ser respeitado (0 é falsy, usar `is not None`)
         self.sleep_seconds = sleep_seconds if sleep_seconds is not None else INTERVAL_SECONDS.get(interval, 300)
-        self.keyword = SYMBOL_KEYWORDS.get(symbol, "bitcoin")
+        self.keyword = SYMBOL_KEYWORDS.get(symbol, "bnb")
         self.news_limit = news_limit
         self.macro_timeframe = macro_timeframe
+        self.impact_collector_enabled = impact_collector_enabled
 
         self.client = BinanceClient()
         self.technical = TechnicalAnalyzer()
@@ -124,12 +127,26 @@ class RobotoBot:
 
         self.db = None
         self._session_id = None
+        self.impact_collector = None
+
         if use_db:
             try:
                 from backend.db.supabase_client import SupabaseClient
                 self.db = SupabaseClient()
             except Exception as e:
                 logger.warning(f"[Bot] Supabase indisponível (modo offline): {e}")
+
+        # Instancia NewsImpactCollector apenas se db disponível e feature ativa
+        if self.db and impact_collector_enabled:
+            try:
+                from backend.market.news_impact_collector import NewsImpactCollector
+                self.impact_collector = NewsImpactCollector(
+                    binance_client=self.client,
+                    db=self.db,
+                )
+                logger.info("[Bot] NewsImpactCollector ativo — coletando histórico de notícias")
+            except Exception as e:
+                logger.warning(f"[Bot] NewsImpactCollector indisponível: {e}")
 
         self._cycle = 0
         self._running = False
@@ -249,7 +266,6 @@ class RobotoBot:
             return
 
         # fix(#42): resetar _df_macro a cada ciclo para evitar dados stale
-        # Se _fetch_macro_candles() falhar, o ciclo usa None em vez do dado antigo
         self._df_macro = None
         if self.macro_filter.enabled:
             self._df_macro = self._fetch_macro_candles()
@@ -279,6 +295,15 @@ class RobotoBot:
                 "mode":             "paper",
                 "macro_blocked":    decision.macro_blocked,
             })
+
+        # Backfill de impactos de notícias coletadas em ciclos anteriores
+        if self.impact_collector:
+            try:
+                updated = self.impact_collector.backfill_impacts(self.symbol)
+                if updated:
+                    logger.debug(f"[Ciclo {self._cycle}] NewsImpact backfill: {updated} registros")
+            except Exception as e:
+                logger.debug(f"[Ciclo {self._cycle}] NewsImpact backfill erro (ignorando): {e}")
 
         ok, reason = self.risk.can_trade(decision)
         if not ok:
@@ -349,8 +374,6 @@ class RobotoBot:
         """
         Verifica o drawdown atual e dispara alerta Telegram se ultrapassar
         o threshold configurado em DRAWDOWN_ALERT_PCT (padrão: 10%).
-        Chamado ao final de cada ciclo, após _run_cycle().
-        Anti-spam garantido pelo flag interno de TelegramAlert.
         """
         try:
             status = self.risk.status()
@@ -408,6 +431,10 @@ class RobotoBot:
             return None
 
     def _run_sentiment(self):
+        """
+        Executa análise de sentiment e, se o NewsImpactCollector estiver ativo,
+        persiste cada notícia com o preço atual para análise de impacto histórico.
+        """
         try:
             result = self.sentiment.get_news_sentiment(
                 keyword=self.keyword,
@@ -417,6 +444,30 @@ class RobotoBot:
                 f"[Ciclo {self._cycle}] Sentiment: {result.signal} "
                 f"(score={result.score:.2f}, {result.news_count} notícias, source={result.source})"
             )
+
+            # Coleta impacto de cada notícia se collector disponível
+            if self.impact_collector:
+                news_items = getattr(self.sentiment, "last_news", []) or []
+                if news_items:
+                    try:
+                        price_now = self.client.get_price(self.symbol)
+                    except Exception:
+                        price_now = None
+
+                    if price_now:
+                        for news_item in news_items:
+                            try:
+                                self.impact_collector.collect(
+                                    news=news_item,
+                                    symbol=self.symbol,
+                                    keyword=self.keyword,
+                                    sentiment_signal=result.signal,
+                                    sentiment_score=result.score,
+                                    price_now=price_now,
+                                )
+                            except Exception as e:
+                                logger.debug(f"[NewsImpact] collect() erro (ignorando): {e}")
+
             return result
         except Exception as e:
             from backend.analysis.sentiment import SentimentResult
@@ -442,6 +493,8 @@ class RobotoBot:
         except (TypeError, ValueError):
             dd_str = "N/A"
 
+        impact_str = "✅ ativo" if self.impact_collector else "⚠️  desativado"
+
         print("\n" + "="*60)
         print(f"  🤖 Roboto — {self.symbol} {self.interval}")
         print(f"  Saldo inicial    : ${self.risk.initial_balance:,.2f}")
@@ -455,8 +508,9 @@ class RobotoBot:
         print(f"  Ciclos           : {self.max_cycles or 'infinito'}")
         print(f"  Sleep            : {self.sleep_seconds}s entre ciclos")
         print(f"  Notícias/ciclo   : {self.news_limit} (cryptocurrency.cv + RSS)")
-        print(f"  Supabase         : {'\u2705 conectado' if self.db else '⚠️  offline'}")
-        print(f"  Telegram         : {'\u2705 ativo' if self.tg.enabled else '⚠️  desativado (sem token)'}")
+        print(f"  NewsImpact       : {impact_str}")
+        print(f"  Supabase         : {'✅ conectado' if self.db else '⚠️  offline'}")
+        print(f"  Telegram         : {'✅ ativo' if self.tg.enabled else '⚠️  desativado (sem token)'}")
         print("="*60 + "\n")
 
     def _print_metrics(self):
@@ -490,7 +544,7 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description="Roboto — Bot de trading automático")
-    parser.add_argument("--symbol",      default="BTCUSDT",  help="Par de moedas (padrão: BTCUSDT)")
+    parser.add_argument("--symbol",      default="BNBUSDT",  help="Par de moedas (padrão: BNBUSDT)")
     parser.add_argument("--interval",    default="5m",       help="Timeframe (padrão: 5m)")
     parser.add_argument("--balance",     default=10000.0,    type=float, help="Saldo inicial USDT")
     parser.add_argument("--cycles",      default=5,          type=int,   help="Nº de ciclos (0=infinito)")
@@ -504,6 +558,7 @@ if __name__ == "__main__":
     parser.add_argument("--rr",          default=2.0,        type=float, help="R:R mínimo para TP (padrão: 2.0)")
     parser.add_argument("--no-macro",    action="store_true",            help="Desativa filtro de tendência macro")
     parser.add_argument("--macro-tf",    default="1h",                   help="Timeframe do filtro macro (padrão: 1h)")
+    parser.add_argument("--no-impact",   action="store_true",            help="Desativa NewsImpactCollector")
     args = parser.parse_args()
 
     bot = RobotoBot(
@@ -521,5 +576,6 @@ if __name__ == "__main__":
         rr_ratio=args.rr,
         macro_filter_enabled=not args.no_macro,
         macro_timeframe=args.macro_tf,
+        impact_collector_enabled=not args.no_impact,
     )
     bot.run()
