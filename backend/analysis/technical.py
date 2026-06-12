@@ -106,7 +106,6 @@ class TechnicalAnalysis:
 
         df.loc[df["signal"] != 0, "strength"] = "strong"
 
-        sma = df["bb_middle"]
         upper = df["bb_upper"]
         lower = df["bb_lower"]
 
