@@ -30,18 +30,31 @@ class SignalDecision:
     technical_signal: Optional[str] = None
     sentiment_signal: Optional[str] = None
     symbol: Optional[str] = None
+    timeframe: str | None = None
     current_price: Optional[float] = None
     atr: Optional[float] = None
     reason: str = ""
+    rsi: float | None = None
+    sentiment_score: float | None = None
+    news_count: int | None = None
 
     def __post_init__(self):
-        # Se tech foi passado mas atr não, tenta extrair de tech
-        if self.tech is not None and self.atr is None:
-            self.atr = getattr(self.tech, "atr", None)
-        if self.tech is not None and self.current_price is None:
-            self.current_price = getattr(self.tech, "current_price", None)
-        if self.technical_signal is None and self.tech is not None:
-            self.technical_signal = getattr(self.tech, "signal", None)
+        # Se tech foi passado mas campos não, tenta extrair de tech
+        if self.tech is not None:
+            if self.atr is None:
+                self.atr = getattr(self.tech, "atr", None)
+            if self.current_price is None:
+                self.current_price = getattr(self.tech, "current_price", None)
+            if self.rsi is None:
+                self.rsi = getattr(self.tech, "rsi", None)
+            if self.technical_signal is None:
+                self.technical_signal = getattr(self.tech, "signal", None)
+
+        if self.sentiment is not None:
+            if self.sentiment_score is None:
+                self.sentiment_score = self.sentiment.score
+            if self.news_count is None:
+                self.news_count = getattr(self.sentiment, "news_count", None)
 
     def direction(self) -> str:
         """Direção básica derivada do final."""
@@ -50,6 +63,17 @@ class SignalDecision:
         if self.final in {PUT_FORTE, PUT_FRACO}:
             return "PUT"
         return "AGUARDAR"
+
+    def strength(self) -> str:
+        """Força do sinal com base no final (forte vs fraco).
+
+        Usado pelo RiskManager para aplicar only_strong.
+        """
+        if self.final in {CALL_FORTE, PUT_FORTE}:
+            return "strong"
+        if self.final in {CALL_FRACO, PUT_FRACO}:
+            return "weak"
+        return "none"
 
     def debug_breakdown(self) -> str:
         parts = []
@@ -125,6 +149,7 @@ class SignalCombiner:
             tech=tech,
             sentiment=sentiment,
             symbol=self.symbol,
+            timeframe=self.timeframe,
             current_price=tech.current_price,
             atr=tech.atr,
         )
