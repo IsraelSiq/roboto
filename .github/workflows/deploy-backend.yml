@@ -1,25 +1,15 @@
 # ============================================================
 # Deploy Backend (#30)
 #
-# Suporta 2 modos de deploy (configure via GitHub Variable DEPLOY_MODE):
+# TEMPORARIAMENTE DESATIVADO — rodar manualmente via Actions > Run workflow
+# ate RENDER_DEPLOY_HOOK / VPS secrets estarem configurados.
 #
-# Modo A — Render (recomendado, default):
-#   Secrets: RENDER_DEPLOY_HOOK
-#   Como obter: Render > roboto-api > Settings > Deploy Hook
-#
-# Modo B — VPS via SSH + Docker:
-#   Secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY
+# Para reativar: restaurar o bloco 'on: push' abaixo.
 # ============================================================
 
 name: Deploy Backend
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'requirements*.txt'
-      - 'Dockerfile'
   workflow_dispatch:
 
 jobs:
@@ -76,7 +66,7 @@ jobs:
         run: |
           HOOK="$RENDER_DEPLOY_HOOK"
           if [ -z "$HOOK" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK n\u00e3o configurado \u2014 pulando deploy"
+            echo "::warning::RENDER_DEPLOY_HOOK não configurado — pulando deploy"
             exit 0
           fi
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOOK")

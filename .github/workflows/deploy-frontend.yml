@@ -1,21 +1,16 @@
 # ============================================================
 # Deploy Frontend — Vercel (#30)
 #
-# Dispara no push para main (apenas se frontend/ mudar).
-# Requer secrets no repositório:
-#   VERCEL_TOKEN       — token de API do Vercel (Account Settings > Tokens)
-#   VERCEL_ORG_ID      — Team/Personal account ID
-#   VERCEL_PROJECT_ID  — ID do projeto Vercel
+# TEMPORARIAMENTE DESATIVADO — rodar manualmente via Actions > Run workflow
+# ate VERCEL_TOKEN, VERCEL_ORG_ID e VERCEL_PROJECT_ID estarem configurados
+# nos secrets do repositorio.
+#
+# Para reativar: restaurar o bloco 'on: push' abaixo.
 # ============================================================
 
 name: Deploy Frontend (Vercel)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - 'vercel.json'
   workflow_dispatch:
 
 jobs:
