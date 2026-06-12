@@ -18,6 +18,11 @@ Filtro macro (#8):
     Se macro_filter estiver ativo e tendência for desfavorável,
     final → AGUARDAR independente do sinal técnico/sentiment.
     SignalDecision.macro_blocked = True quando isso ocorre.
+
+Fix #34:
+    macro_ok == None (mercado lateral / dados insuficientes) agora é tratado
+    como bloqueio conservador, igual a macro_ok == False.
+    Isso alinha comportamento com o docstring e os logs do MacroTrendFilter.
 """
 
 import logging
@@ -217,15 +222,23 @@ class SignalCombiner:
         if self.only_strong and final in (CALL_FRACO, PUT_FRACO):
             final = AGUARDAR
 
-        # --- Filtro macro (#8) ---
+        # --- Filtro macro (#8 / fix #34) ---
+        # macro_ok == False  → tendência desfavorável → bloquear
+        # macro_ok == None   → mercado lateral ou dados insuficientes → bloquear conservadoramente
+        # macro_ok == True   → tendência favorável → permitir
         macro_blocked = False
         if self.macro_filter is not None and final != AGUARDAR:
             direcao = "CALL" if final in (CALL_FORTE, CALL_FRACO) else "PUT"
             macro_ok = self.macro_filter.tendencia_favoravel(df_macro, direcao)
-            if macro_ok is False:
+            if macro_ok is not True:
+                motivo = (
+                    "tendência desfavorável"
+                    if macro_ok is False
+                    else "mercado lateral / dados insuficientes"
+                )
                 logger.info(
-                    f"[MacroFilter] {direcao} bloqueado pela tendência macro — "
-                    f"sinal original era '{final}'"
+                    f"[MacroFilter] {direcao} bloqueado — {motivo} "
+                    f"(sinal original era '{final}')"
                 )
                 final = AGUARDAR
                 macro_blocked = True
