@@ -59,21 +59,23 @@ def test_open_trade_put_uses_pct_stop_by_default():
 
 
 def test_open_trade_call_uses_atr_when_enabled():
-    rm = RiskManager(use_atr_stop=True, atr_multiplier=2.0, stop_loss_pct=5.0)
+    # entry=100, ATR=4, mult=2.0 -> risco=8 -> SL=92, TP=100+8*2.0=116
+    rm = RiskManager(use_atr_stop=True, atr_multiplier=2.0, rr_ratio=2.0, stop_loss_pct=5.0)
     trade = rm.open_trade(make_decision(final=CALL_FORTE, price=100.0, atr=4.0))
     assert trade.direction == "CALL"
     assert trade.stop_loss == 92.0
-    assert trade.take_profit == 110.0
+    assert trade.take_profit == 116.0
     assert trade.stop_loss_mode == "atr"
     assert trade.atr_at_entry == 4.0
 
 
 def test_open_trade_put_uses_atr_when_enabled():
-    rm = RiskManager(use_atr_stop=True, atr_multiplier=2.0, stop_loss_pct=5.0)
+    # entry=100, ATR=4, mult=2.0 -> risco=8 -> SL=108, TP=100-8*2.0=84
+    rm = RiskManager(use_atr_stop=True, atr_multiplier=2.0, rr_ratio=2.0, stop_loss_pct=5.0)
     trade = rm.open_trade(make_decision(final=PUT_FORTE, price=100.0, atr=4.0))
     assert trade.direction == "PUT"
     assert trade.stop_loss == 108.0
-    assert trade.take_profit == 90.0
+    assert trade.take_profit == 84.0
     assert trade.stop_loss_mode == "atr"
     assert trade.atr_at_entry == 4.0
 
