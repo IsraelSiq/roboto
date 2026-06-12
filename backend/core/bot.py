@@ -49,7 +49,7 @@ class RobotoBot:
         interval:               Timeframe dos candles (padrão: 5m)
         candle_limit:           Qtd de candles para análise técnica (padrão: 100)
         balance:                Saldo inicial simulado em USDT (padrão: 10000.0)
-        sleep_seconds:          Intervalo entre ciclos em segundos
+        sleep_seconds:          Intervalo entre ciclos em segundos (0 = sem sleep)
         only_strong:            Só opera sinais FORTES (padrão: True)
         max_cycles:             Limite de ciclos (None = infinito)
         use_db:                 Persiste dados no Supabase (padrão: True)
@@ -84,7 +84,8 @@ class RobotoBot:
         self.interval = interval
         self.candle_limit = candle_limit
         self.max_cycles = max_cycles
-        self.sleep_seconds = sleep_seconds or INTERVAL_SECONDS.get(interval, 300)
+        # fix: sleep_seconds=0 deve ser respeitado (0 é falsy, usar `is not None`)
+        self.sleep_seconds = sleep_seconds if sleep_seconds is not None else INTERVAL_SECONDS.get(interval, 300)
         self.keyword = SYMBOL_KEYWORDS.get(symbol, "bitcoin")
         self.news_limit = news_limit
         self.macro_timeframe = macro_timeframe
@@ -178,8 +179,9 @@ class RobotoBot:
                     break
 
                 if self._running and (self.max_cycles is None or self._cycle < self.max_cycles):
-                    logger.info(f"[Bot] Aguardando {self.sleep_seconds}s até próximo ciclo...")
-                    time.sleep(self.sleep_seconds)
+                    if self.sleep_seconds > 0:
+                        logger.info(f"[Bot] Aguardando {self.sleep_seconds}s até próximo ciclo...")
+                        self._interruptible_sleep(self.sleep_seconds)
 
         except KeyboardInterrupt:
             self._stop_reason = "Ctrl+C (usuário)"
@@ -216,6 +218,12 @@ class RobotoBot:
     def stop(self):
         self._stop_reason = "stop() chamado externamente"
         self._running = False
+
+    def _interruptible_sleep(self, seconds: float):
+        """Sleep interrompido assim que _running vira False (granularidade 0.1s)."""
+        deadline = time.monotonic() + seconds
+        while self._running and time.monotonic() < deadline:
+            time.sleep(min(0.1, deadline - time.monotonic()))
 
     # ----------------------------------------------------------
     # CICLO
@@ -289,8 +297,6 @@ class RobotoBot:
             logger.error(f"[Monitor] Erro ao obter preço: {e}")
             return
 
-        # fix #33: get_price() retorna Optional[float] — guard contra None
-        # evita TypeError em check_exit() e close_trade() ao comparar com float
         if current_price is None:
             logger.error(
                 f"[Monitor] get_price({self.symbol}) retornou None — "
@@ -313,7 +319,6 @@ class RobotoBot:
                 result=trade.result,
                 balance=self.risk.balance,
             )
-            # Drawdown pode ter recuado após WIN — reseta o flag (#32)
             if trade.result == "WIN":
                 self.tg.reset_drawdown_alert()
                 logger.debug("[Bot] reset_drawdown_alert() após WIN")
@@ -418,8 +423,6 @@ class RobotoBot:
             f"ativo ({self.macro_timeframe}) | EMA{self.macro_filter.ema_fast}/EMA{self.macro_filter.ema_slow}"
             if self.macro_filter.enabled else "desativado"
         )
-        # fix #46: usa propriedade pública drawdown_threshold com fallback seguro
-        # evita TypeError quando self.tg é MagicMock sem spec em testes
         dd_threshold = getattr(self.tg, "drawdown_threshold", None)
         if dd_threshold is None:
             dd_threshold = getattr(self.tg, "_drawdown_threshold", 0)
@@ -441,8 +444,8 @@ class RobotoBot:
         print(f"  Ciclos           : {self.max_cycles or 'infinito'}")
         print(f"  Sleep            : {self.sleep_seconds}s entre ciclos")
         print(f"  Notícias/ciclo   : {self.news_limit} (CryptoPanic + RSS)")
-        print(f"  Supabase         : {'✅ conectado' if self.db else '⚠️  offline'}")
-        print(f"  Telegram         : {'✅ ativo' if self.tg.enabled else '⚠️  desativado (sem token)'}")
+        print(f"  Supabase         : {'\u2705 conectado' if self.db else '⚠️  offline'}")
+        print(f"  Telegram         : {'\u2705 ativo' if self.tg.enabled else '⚠️  desativado (sem token)'}")
         print("="*60 + "\n")
 
     def _print_metrics(self):
