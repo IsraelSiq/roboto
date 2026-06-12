@@ -65,15 +65,16 @@ class SignalDecision:
         return "AGUARDAR"
 
     def strength(self) -> str:
-        """Força do sinal com base no final (forte vs fraco).
-
-        Usado pelo RiskManager para aplicar only_strong.
-        """
+        """Força do sinal com base no final (forte vs fraco)."""
         if self.final in {CALL_FORTE, PUT_FORTE}:
             return "strong"
         if self.final in {CALL_FRACO, PUT_FRACO}:
             return "weak"
         return "none"
+
+    # Método compatível com RiskManager.only_strong
+    def is_strong(self) -> bool:
+        return self.strength() == "strong"
 
     def debug_breakdown(self) -> str:
         parts = []
