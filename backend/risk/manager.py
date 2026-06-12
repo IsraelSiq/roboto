@@ -19,6 +19,10 @@ Issue #7:
                TP = entry - (ATR * atr_multiplier * rr_ratio)
     - Se ATR não estiver disponível, cai automaticamente para SL/TP percentual.
     - R:R mínimo garantido: rr_ratio (padrão 2.0) quando ATR ativo.
+
+Issue #32:
+    - Trade.__eq__ e __hash__ baseados em id para evitar duplicação em _trades
+      quando close_trade() recebe objeto diferente (testes, API, desserialização).
 """
 
 import logging
@@ -50,6 +54,15 @@ class Trade:
     pnl_pct: Optional[float] = None
     stop_loss_mode: str = "pct" # 'pct' | 'atr'
     atr_at_entry: Optional[float] = None
+
+    # fix #32: comparação e hash baseados no id único do trade
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Trade):
+            return False
+        return self.id == other.id
+
+    def __hash__(self) -> int:
+        return hash(self.id)
 
     def is_open(self) -> bool:
         return self.result == "PENDING"
@@ -196,6 +209,7 @@ class RiskManager:
         trade.pnl_pct = round(pnl_pct, 4)
         trade.result = "WIN" if pnl_pct > 0 else "LOSS"
 
+        # fix #32: __eq__ agora compara por id, evitando duplicação com objetos distintos
         if trade not in self._trades:
             self._trades.append(trade)
 
