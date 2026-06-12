@@ -1,210 +1,131 @@
-"""
-Roboto — Análise Técnica
-Calcula RSI, EMA50, MACD, Bollinger Bands e ATR usando pandas-ta-classic.
-Gera sinal técnico: CALL | PUT | AGUARDAR
-
-Estratégia (scoring 4 indicadores, min_score=2):
-    CALL: RSI > rsi_call_threshold | MACD bullish | Preço>EMA50 | BB lower
-    PUT:  RSI < rsi_put_threshold  | MACD bearish | Preço<EMA50 | BB upper
-    score >= min_score e maior que o oposto → CALL ou PUT
-
-Issue #7:
-    - Expõe ATR(14) no TechnicalResult para permitir stop loss dinâmico.
-"""
-
 import logging
-from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 import pandas as pd
-import pandas_ta_classic as ta
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class TechnicalResult:
-    signal: str
-    reason: str
-    rsi: Optional[float] = None
-    macd: Optional[float] = None
-    macd_signal: Optional[float] = None
-    macd_cross: Optional[str] = None
-    ema50: Optional[float] = None
-    bb_upper: Optional[float] = None
-    bb_lower: Optional[float] = None
-    atr: Optional[float] = None
-    current_price: Optional[float] = None
-    price_vs_ema: Optional[str] = None
-    price_vs_bb: Optional[str] = None
-
-
-class TechnicalAnalyzer:
-    """
-    Scoring de 4 indicadores. Sinal gerado quando score >= min_score
-    e maior que o score oposto.
-
-    Args:
-        rsi_overbought:    Nível de sobrecompra para RSI PUT (padrão: 70)
-        rsi_oversold:      Nível de sobrevenda para RSI CALL (padrão: 30)
-        rsi_call_threshold: RSI acima deste valor pontua CALL (padrão: 55)
-        rsi_put_threshold:  RSI abaixo deste valor pontua PUT (padrão: 45)
-        min_score:         Pontuação mínima para gerar sinal (padrão: 2)
-        min_candles:       Mínimo de candles (padrão: 60)
-        atr_period:        Período do ATR (padrão: 14)
-    """
-
-    def __init__(
-        self,
-        rsi_period: int = 14,
-        ema_period: int = 50,
-        bb_period: int = 20,
-        bb_std: float = 2.0,
-        atr_period: int = 14,
-        rsi_overbought: int = 70,
-        rsi_oversold: int = 30,
-        rsi_call_threshold: int = 55,
-        rsi_put_threshold: int = 45,
-        min_score: int = 2,
-        min_candles: int = 60,
-    ):
-        self.rsi_period = rsi_period
-        self.ema_period = ema_period
-        self.bb_period = bb_period
-        self.bb_std = bb_std
-        self.atr_period = atr_period
-        self.rsi_overbought = rsi_overbought
-        self.rsi_oversold = rsi_oversold
-        self.rsi_call_threshold = rsi_call_threshold
-        self.rsi_put_threshold = rsi_put_threshold
-        self.min_score = min_score
-        self.min_candles = min_candles
-
-    def analyze(self, df: pd.DataFrame) -> TechnicalResult:
-        if df.empty or len(df) < self.min_candles:
-            return TechnicalResult(
-                signal="AGUARDAR",
-                reason=f"Candles insuficientes ({len(df)}/{self.min_candles})"
-            )
-        df = df.copy()
-        try:
-            rsi_s = ta.rsi(df["close"], length=self.rsi_period)
-            rsi = float(rsi_s.iloc[-1]) if rsi_s is not None else None
-
-            ema_s = ta.ema(df["close"], length=self.ema_period)
-            ema50 = float(ema_s.iloc[-1]) if ema_s is not None else None
-
-            macd_val, macd_sig, macd_cross = None, None, "NONE"
-            macd_df = ta.macd(df["close"])
-            if macd_df is not None and not macd_df.empty:
-                cols = macd_df.columns.tolist()
-                mc = [c for c in cols if c.startswith("MACD_") and "s" not in c.lower() and "h" not in c.lower()]
-                sc = [c for c in cols if "MACDs" in c]
-                if mc and sc:
-                    macd_val  = float(macd_df[mc[0]].iloc[-1])
-                    macd_sig  = float(macd_df[sc[0]].iloc[-1])
-                    macd_prev = float(macd_df[mc[0]].iloc[-2])
-                    sig_prev  = float(macd_df[sc[0]].iloc[-2])
-                    if macd_prev <= sig_prev and macd_val > macd_sig:
-                        macd_cross = "UP"
-                    elif macd_prev >= sig_prev and macd_val < macd_sig:
-                        macd_cross = "DOWN"
-
-            bb_upper, bb_lower = None, None
-            bb_df = ta.bbands(df["close"], length=self.bb_period, std=self.bb_std)
-            if bb_df is not None and not bb_df.empty:
-                uc = [c for c in bb_df.columns if "BBU" in c]
-                lc = [c for c in bb_df.columns if "BBL" in c]
-                if uc and lc:
-                    bb_upper = float(bb_df[uc[0]].iloc[-1])
-                    bb_lower = float(bb_df[lc[0]].iloc[-1])
-
-            atr = None
-            atr_s = ta.atr(df["high"], df["low"], df["close"], length=self.atr_period)
-            if atr_s is not None and not atr_s.empty:
-                atr = float(atr_s.iloc[-1])
-
-            price = float(df["close"].iloc[-1])
-            price_vs_ema = self._price_vs_ema(price, ema50)
-            price_vs_bb  = self._price_vs_bb(price, bb_upper, bb_lower)
-
-            signal, reason = self._generate_signal(
-                rsi=rsi, macd_val=macd_val, macd_sig=macd_sig,
-                macd_cross=macd_cross, price_vs_ema=price_vs_ema, price_vs_bb=price_vs_bb,
-            )
-
-            return TechnicalResult(
-                signal=signal, reason=reason,
-                rsi=round(rsi, 2) if rsi is not None else None,
-                macd=round(macd_val, 4) if macd_val is not None else None,
-                macd_signal=round(macd_sig, 4) if macd_sig is not None else None,
-                macd_cross=macd_cross,
-                ema50=round(ema50, 2) if ema50 is not None else None,
-                bb_upper=round(bb_upper, 2) if bb_upper is not None else None,
-                bb_lower=round(bb_lower, 2) if bb_lower is not None else None,
-                atr=round(atr, 4) if atr is not None else None,
-                current_price=round(price, 2),
-                price_vs_ema=price_vs_ema,
-                price_vs_bb=price_vs_bb,
-            )
-        except Exception as e:
-            logger.error(f"Erro na análise técnica: {e}")
-            return TechnicalResult(signal="AGUARDAR", reason=f"Erro interno: {e}")
-
-    def _generate_signal(self, rsi, macd_val, macd_sig, macd_cross, price_vs_ema, price_vs_bb):
-        call_score, call_reasons = 0, []
-        put_score,  put_reasons  = 0, []
-
-        if rsi is not None:
-            if rsi > self.rsi_call_threshold:
-                call_score += 1
-                call_reasons.append(f"RSI={rsi:.1f}>{self.rsi_call_threshold}")
-            elif rsi < self.rsi_put_threshold:
-                put_score += 1
-                put_reasons.append(f"RSI={rsi:.1f}<{self.rsi_put_threshold}")
-
-        if macd_val is not None and macd_sig is not None:
-            if macd_cross == "UP" or macd_val > macd_sig:
-                call_score += 1
-                call_reasons.append("MACD bullish")
-            if macd_cross == "DOWN" or macd_val < macd_sig:
-                put_score += 1
-                put_reasons.append("MACD bearish")
-
-        if price_vs_ema == "ABOVE":
-            call_score += 1
-            call_reasons.append("Preço>EMA50")
-        elif price_vs_ema == "BELOW":
-            put_score += 1
-            put_reasons.append("Preço<EMA50")
-
-        if price_vs_bb == "LOWER":
-            call_score += 1
-            call_reasons.append("BB lower")
-        elif price_vs_bb == "UPPER":
-            put_score += 1
-            put_reasons.append("BB upper")
-
-        if call_score >= self.min_score and call_score > put_score:
-            return "CALL", " | ".join(call_reasons)
-        if put_score >= self.min_score and put_score > call_score:
-            return "PUT", " | ".join(put_reasons)
-        if call_score >= self.min_score and call_score == put_score:
-            return "AGUARDAR", f"Empate CALL={call_score} PUT={put_score}"
-
-        return "AGUARDAR", f"Score insuficiente (CALL={call_score} PUT={put_score} min={self.min_score})"
+class TechnicalAnalysis:
+    """Conjunto de indicadores técnicos usados pelo robô."""
 
     @staticmethod
-    def _price_vs_ema(price: float, ema: Optional[float]) -> str:
-        if ema is None: return "UNKNOWN"
-        diff = (price - ema) / ema
-        if diff > 0.001: return "ABOVE"
-        if diff < -0.001: return "BELOW"
-        return "AT"
+    def ema(series: pd.Series, period: int) -> pd.Series:
+        return series.ewm(span=period, adjust=False).mean()
 
     @staticmethod
-    def _price_vs_bb(price: float, bb_upper: Optional[float], bb_lower: Optional[float]) -> str:
-        if bb_upper is None or bb_lower is None: return "UNKNOWN"
-        if price >= bb_upper: return "UPPER"
-        if price <= bb_lower: return "LOWER"
-        return "MIDDLE"
+    def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+        delta = series.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        return rsi.fillna(50)
+
+    @staticmethod
+    def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
+        ema_fast = TechnicalAnalysis.ema(series, fast)
+        ema_slow = TechnicalAnalysis.ema(series, slow)
+        macd_line = ema_fast - ema_slow
+        signal_line = TechnicalAnalysis.ema(macd_line, signal)
+        hist = macd_line - signal_line
+        return macd_line, signal_line, hist
+
+    @staticmethod
+    def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+        high = df["high"]
+        low = df["low"]
+        close = df["close"]
+
+        prev_close = close.shift(1)
+        tr1 = high - low
+        tr2 = (high - prev_close).abs()
+        tr3 = (low - prev_close).abs()
+
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+        return atr
+
+    @staticmethod
+    def bollinger_bands(series: pd.Series, period: int = 20, num_std: float = 2.0):
+        sma = series.rolling(window=period).mean()
+        std = series.rolling(window=period).std()
+        upper = sma + num_std * std
+        lower = sma - num_std * std
+        return sma, upper, lower
+
+    @staticmethod
+    def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
+        close = df["close"]
+
+        df["ema_20"] = TechnicalAnalysis.ema(close, 20)
+        df["ema_50"] = TechnicalAnalysis.ema(close, 50)
+        df["rsi_14"] = TechnicalAnalysis.rsi(close, 14)
+
+        macd_line, signal_line, hist = TechnicalAnalysis.macd(close)
+        df["macd_line"] = macd_line
+        df["macd_signal"] = signal_line
+        df["macd_hist"] = hist
+
+        df["atr_14"] = TechnicalAnalysis.atr(df, 14)
+
+        sma, upper, lower = TechnicalAnalysis.bollinger_bands(close)
+        df["bb_middle"] = sma
+        df["bb_upper"] = upper
+        df["bb_lower"] = lower
+
+        return df
+
+    @staticmethod
+    def generate_signal(
+        df: pd.DataFrame,
+        sentiment: str = "positive",
+        only_strong: bool = True,
+        atr_multiplier: float = 1.5,
+    ) -> pd.DataFrame:
+        df = TechnicalAnalysis.add_indicators(df.copy())
+
+        df["signal"] = 0
+        df["strength"] = "weak"
+
+        up_trend = df["ema_20"] > df["ema_50"]
+        down_trend = df["ema_20"] < df["ema_50"]
+
+        bullish_rsi = df["rsi_14"] > 55
+        bearish_rsi = df["rsi_14"] < 45
+
+        macd_cross_up = (df["macd_line"].shift(1) < df["macd_signal"].shift(1)) & (
+            df["macd_line"] > df["macd_signal"]
+        )
+        macd_cross_down = (df["macd_line"].shift(1) > df["macd_signal"].shift(1)) & (
+            df["macd_line"] < df["macd_signal"]
+        )
+
+        df.loc[up_trend & bullish_rsi & macd_cross_up, "signal"] = 1
+        df.loc[down_trend & bearish_rsi & macd_cross_down, "signal"] = -1
+
+        df.loc[df["signal"] != 0, "strength"] = "strong"
+
+        sma = df["bb_middle"]
+        upper = df["bb_upper"]
+        lower = df["bb_lower"]
+
+        price = df["close"]
+        near_upper = price > upper * 0.99
+        near_lower = price < lower * 1.01
+
+        df.loc[near_lower & (df["signal"] == 0) & up_trend, "signal"] = 1
+        df.loc[near_upper & (df["signal"] == 0) & down_trend, "signal"] = -1
+
+        if sentiment == "positive":
+            df.loc[df["signal"] < 0, "signal"] = 0
+        elif sentiment == "negative":
+            df.loc[df["signal"] > 0, "signal"] = 0
+
+        if only_strong:
+            df.loc[df["strength"] != "strong", "signal"] = 0
+
+        df["atr_stop"] = df["atr_14"] * atr_multiplier
+
+        return df
