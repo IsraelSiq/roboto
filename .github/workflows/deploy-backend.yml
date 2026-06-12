@@ -35,6 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -73,7 +76,7 @@ jobs:
         run: |
           HOOK="$RENDER_DEPLOY_HOOK"
           if [ -z "$HOOK" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK n\u00e3o configurado — pulando deploy"
+            echo "::warning::RENDER_DEPLOY_HOOK n\u00e3o configurado \u2014 pulando deploy"
             exit 0
           fi
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOOK")
