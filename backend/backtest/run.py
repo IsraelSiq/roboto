@@ -1,3 +1,11 @@
+import argparse
+import json
+import logging
+
+from backend.backtest.data_loader import BacktestDataLoader
+from backend.backtest.engine import BacktestEngine
+from backend.backtest.report import BacktestReporter
+
 """
 Roboto — Backtest Runner
 
@@ -17,19 +25,11 @@ SL/TP padrões por timeframe (Risk:Reward 1:2):
     4h  → SL=4.0%  TP=8.0%
 """
 
-import argparse
-import json
-import logging
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%H:%M:%S",
 )
-
-from backend.backtest.data_loader import BacktestDataLoader
-from backend.backtest.engine import BacktestEngine
-from backend.backtest.report import BacktestReporter
 
 # SL/TP padrão por timeframe (Risk:Reward 1:2)
 DEFAULT_RISK = {
@@ -53,9 +53,9 @@ def main():
     parser.add_argument("--end",       default=None)
     parser.add_argument("--balance",   type=float, default=10000.0)
     parser.add_argument("--sl",        type=float, default=None,
-                        help="Stop loss %% (padrão: auto por timeframe)")
+                        help="Stop loss % (padrão: auto por timeframe)")
     parser.add_argument("--tp",        type=float, default=None,
-                        help="Take profit %% (padrão: auto por timeframe)")
+                        help="Take profit % (padrão: auto por timeframe)")
     parser.add_argument("--sentiment", default="positive",
                         choices=["neutral", "positive", "negative"])
     parser.add_argument("--weak",      action="store_true",

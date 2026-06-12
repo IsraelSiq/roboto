@@ -215,5 +215,5 @@ if __name__ == "__main__":
     print(f"Preço BTC:   ${price:,.2f}")
     print(f"Saldo USDT:  ${bc.get_account_balance('USDT'):,.2f}")
     df = bc.get_candles(symbol="BTCUSDT", interval="5m", limit=5)
-    print(f"\nÚltimos 5 candles BTCUSDT 5m:")
+    print("\nÚltimos 5 candles BTCUSDT 5m:")
     print(df.to_string(index=False))
