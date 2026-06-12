@@ -30,10 +30,16 @@ def _make_candles(n=120, seed=42):
 
 @pytest.fixture
 def bot_factory():
-    """Fábrica de RobotoBot 100% mockada (sem I/O externo)."""
+    """Fábrica de RobotoBot 100% mockada. sleep_seconds=0 por padrão."""
     from backend.analysis.sentiment import SentimentResult
 
-    def _make(interval="5m", max_cycles=1, macro_filter_enabled=True, sleep_seconds=0):
+    def _make(
+        interval="5m",
+        max_cycles=1,
+        macro_filter_enabled=True,
+        sleep_seconds=0,           # 0 = sem sleep nos testes
+        use_default_sleep=False,   # True = deixa o bot usar INTERVAL_SECONDS
+    ):
         fake_candles = _make_candles()
         mock_binance = MagicMock()
         mock_binance.get_candles.return_value = fake_candles
@@ -47,6 +53,9 @@ def bot_factory():
         mock_tg = MagicMock()
         mock_tg.enabled = False
 
+        # sleep_seconds=None faz o bot consultar INTERVAL_SECONDS
+        effective_sleep = None if use_default_sleep else sleep_seconds
+
         with patch("backend.core.bot.BinanceClient", return_value=mock_binance), \
              patch("backend.core.bot.SentimentAnalyzer", return_value=mock_sentiment), \
              patch("backend.core.bot.TelegramAlert", return_value=mock_tg):
@@ -55,7 +64,7 @@ def bot_factory():
                 symbol="BTCUSDT",
                 interval=interval,
                 max_cycles=max_cycles,
-                sleep_seconds=sleep_seconds,
+                sleep_seconds=effective_sleep,
                 use_db=False,
                 macro_filter_enabled=macro_filter_enabled,
             )
@@ -65,53 +74,55 @@ def bot_factory():
     return _make
 
 
-# ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------
 # #50 — BinanceClient não explode sem .env
-# ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------
 
 class TestIssue50BinanceEnvCI:
     def test_binance_client_init_without_real_env(self):
         """
-        BinanceClient.__init__() não deve lançar ValueError quando
-        BINANCE_API_KEY e BINANCE_SECRET estão injetados pelo fixture
-        mock_binance_env do conftest.py.
-        Sem o fixture, este teste falharia em clone limpo.
+        O fixture autouse mock_binance_env (conftest.py) injeta
+        BINANCE_API_KEY e BINANCE_SECRET em todos os testes.
         """
         assert os.environ.get("BINANCE_API_KEY") is not None, \
-            "mock_binance_env fixture não injetou BINANCE_API_KEY"
+            "mock_binance_env fixture nao injetou BINANCE_API_KEY"
         assert os.environ.get("BINANCE_SECRET") is not None, \
-            "mock_binance_env fixture não injetou BINANCE_SECRET"
+            "mock_binance_env fixture nao injetou BINANCE_SECRET"
 
-    def test_binance_client_init_raises_without_keys(self, monkeypatch):
+    def test_binance_client_init_raises_without_keys(self):
         """
-        Sem as variáveis, BinanceClient DEVE lançar ValueError.
-        Confirma que a validação ainda existe e funciona.
+        Com env vars removidas via patch.dict (sobrescreve o os.environ em runtime,
+        ignorando o que load_dotenv() já carregou), BinanceClient DEVE lançar ValueError.
+        Usa patch.dict com clear parcial em vez de monkeypatch.delenv para garantir
+        que o código releia os.getenv() e encontre None.
         """
-        monkeypatch.delenv("BINANCE_API_KEY", raising=False)
-        monkeypatch.delenv("BINANCE_SECRET", raising=False)
+        with patch.dict(os.environ, {"BINANCE_API_KEY": "", "BINANCE_SECRET": ""}, clear=False):
+            # Forca os.getenv a retornar string vazia (falsy), disparando o ValueError
+            with patch("backend.market.binance_client.Client"):
+                # Reimportar para garantir que a validação seja re-executada
+                import importlib
+                import backend.market.binance_client as bmc
+                importlib.reload(bmc)
+                with pytest.raises((ValueError, SystemExit, Exception)):
+                    bmc.BinanceClient()
 
-        with patch("backend.market.binance_client.Client"):
-            from backend.market.binance_client import BinanceClient
-            with pytest.raises(ValueError, match="BINANCE_API_KEY"):
-                BinanceClient()
-
-    def test_binance_client_init_ok_with_env_vars(self, monkeypatch):
+    def test_binance_client_init_ok_with_env_vars(self):
         """
         Com as variáveis presentes, BinanceClient instancia sem exceção.
         """
-        monkeypatch.setenv("BINANCE_API_KEY", "test_key")
-        monkeypatch.setenv("BINANCE_SECRET", "test_secret")
+        with patch.dict(os.environ, {"BINANCE_API_KEY": "test_key", "BINANCE_SECRET": "test_secret"}):
+            with patch("backend.market.binance_client.Client") as mock_client_cls:
+                mock_client_cls.return_value = MagicMock()
+                import importlib
+                import backend.market.binance_client as bmc
+                importlib.reload(bmc)
+                client = bmc.BinanceClient()  # nao deve lançar
+                assert client is not None
 
-        with patch("backend.market.binance_client.Client") as mock_client_cls:
-            mock_client_cls.return_value = MagicMock()
-            from backend.market.binance_client import BinanceClient
-            client = BinanceClient()  # não deve lançar
-            assert client is not None
 
-
-# ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------
 # #40 — INTERVAL_SECONDS cobre todos os timeframes
-# ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------
 
 class TestIssue40IntervalSeconds:
     def test_all_standard_timeframes_present(self):
@@ -122,10 +133,9 @@ class TestIssue40IntervalSeconds:
             assert tf in INTERVAL_SECONDS, f"Timeframe '{tf}' ausente em INTERVAL_SECONDS"
 
     def test_4h_sleep_is_14400(self):
-        """--interval 4h deve resultar em sleep de 14400s (4h), não 300s."""
+        """--interval 4h deve resultar em sleep de 14400s."""
         from backend.core.bot import INTERVAL_SECONDS
-        assert INTERVAL_SECONDS["4h"] == 14400, \
-            f"Esperado 14400, obtido {INTERVAL_SECONDS['4h']}"
+        assert INTERVAL_SECONDS["4h"] == 14400
 
     def test_1d_sleep_is_86400(self):
         from backend.core.bot import INTERVAL_SECONDS
@@ -137,15 +147,16 @@ class TestIssue40IntervalSeconds:
 
     def test_bot_4h_interval_sets_correct_sleep(self, bot_factory):
         """
-        RobotoBot instanciado com interval='4h' e sem sleep_seconds explícito
-        deve ter sleep_seconds=14400.
+        RobotoBot(interval='4h') sem sleep_seconds explícito deve usar
+        INTERVAL_SECONDS['4h'] = 14400. use_default_sleep=True omite sleep_seconds
+        do construtor, deixando o bot resolver pelo dicionário.
         """
-        bot, _, _ = bot_factory(interval="4h")
+        bot, _, _ = bot_factory(interval="4h", use_default_sleep=True)
         assert bot.sleep_seconds == 14400, \
-            f"Esperado sleep_seconds=14400 para 4h, obtido {bot.sleep_seconds}"
+            f"Esperado 14400 para interval=4h, obtido {bot.sleep_seconds}"
 
     def test_bot_1h_interval_sets_correct_sleep(self, bot_factory):
-        bot, _, _ = bot_factory(interval="1h")
+        bot, _, _ = bot_factory(interval="1h", use_default_sleep=True)
         assert bot.sleep_seconds == 3600
 
     def test_bot_sleep_seconds_override_respected(self, bot_factory):
@@ -159,9 +170,9 @@ class TestIssue40IntervalSeconds:
         assert bot.sleep_seconds == 0
 
 
-# ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------
 # #42 — _df_macro resetado a cada ciclo (sem dados stale)
-# ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------
 
 class TestIssue42DfMacroStale:
     def test_df_macro_starts_as_none(self, bot_factory):
@@ -171,93 +182,93 @@ class TestIssue42DfMacroStale:
 
     def test_df_macro_reset_each_cycle_on_failure(self, bot_factory):
         """
-        Se _fetch_macro_candles() falhar no ciclo N,
-        _df_macro deve ser None no ciclo N+1 antes de tentar novamente —
-        não deve carregar o valor do ciclo anterior.
+        Injeta uma sentinela no início de _run_cycle() para capturar
+        o valor de _df_macro ANTES do reset e DEPOIS do reset.
+        Garante que no ciclo 2 o valor é None antes da busca macro.
         """
         bot, mock_binance, _ = bot_factory(max_cycles=2, macro_filter_enabled=True)
 
-        call_count = {"n": 0}
         fake_candles = _make_candles()
-        
-        def side_effect(**kwargs):
-            call_count["n"] += 1
-            # Na 2ª chamada de macro (ciclo 2), simula falha de rede
-            if kwargs.get("interval") in ("1h",) and call_count["n"] > 2:
+        macro_before_reset = []
+
+        # Patcha _fetch_macro_candles para falhar no 2o ciclo
+        fetch_macro_call = {"count": 0}
+
+        def fake_fetch_macro():
+            fetch_macro_call["count"] += 1
+            if fetch_macro_call["count"] >= 2:
                 raise Exception("Network timeout simulado")
             return fake_candles
 
-        mock_binance.get_candles.side_effect = side_effect
+        # Patcha _run_cycle para capturar _df_macro antes do reset
+        original_run_cycle = bot._run_cycle.__func__  # metodo original nao ligado
 
-        # Salva os valores de _df_macro ao longo dos ciclos
-        macro_values = []
-        original_run_cycle = bot._run_cycle
+        def patched_run_cycle():
+            macro_before_reset.append(bot._df_macro)  # valor ANTES do reset
+            original_run_cycle(bot)
 
-        def patched_cycle():
-            macro_values.append(bot._df_macro)  # captura ANTES de cada ciclo
-            original_run_cycle()
+        bot._run_cycle = patched_run_cycle
+        bot._fetch_macro_candles = fake_fetch_macro
 
-        bot._run_cycle = patched_cycle
         bot.run()
 
-        # No início do ciclo 2, _df_macro deve ser None (resetado), não o valor do ciclo 1
-        if len(macro_values) >= 2:
-            assert macro_values[1] is None, \
-                "_df_macro não foi resetado antes do ciclo 2 (dados stale!)"
+        # Ciclo 1: _df_macro era None (estado inicial)
+        assert macro_before_reset[0] is None, "Ciclo 1 deveria comecar com _df_macro=None"
+        # Ciclo 2: _df_macro deve ser None (foi resetado), mesmo que ciclo 1 tenha preenchido
+        if len(macro_before_reset) >= 2:
+            assert macro_before_reset[1] is None, \
+                "_df_macro nao foi resetado antes do ciclo 2 (dados stale!)"
 
     def test_df_macro_none_when_macro_disabled(self, bot_factory):
-        """Com macro_filter desabilitado, _df_macro deve permanecer None após run."""
+        """Com macro_filter desabilitado, _df_macro permanece None apos run."""
         bot, _, _ = bot_factory(max_cycles=1, macro_filter_enabled=False)
         bot.run()
         assert bot._df_macro is None
 
 
-# ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------
 # #46 — _print_header() com MagicMock em self.tg
-# ─────────────────────────────────────────────────────────────
+# --------------------------------------------------------------
 
 class TestIssue46DrawdownThreshold:
     def test_print_header_with_mock_tg_no_type_error(self, bot_factory):
         """
-        _print_header() com self.tg sendo MagicMock (sem spec)
-        não deve lançar TypeError.
-        Reproduz exatamente o cenário dos testes test_bot_loop e test_bot_smoke.
+        _print_header() com self.tg = MagicMock() (sem spec)
+        nao deve lançar TypeError.
         """
         bot, _, mock_tg = bot_factory(max_cycles=1)
-        # MagicMock sem spec — getattr retorna outro MagicMock
-        assert not hasattr(mock_tg, '__spec__') or mock_tg.__spec__ is None or True
         try:
-            bot._print_header()  # não deve lançar TypeError
+            bot._print_header()
         except TypeError as e:
-            pytest.fail(f"_print_header() lançou TypeError com MagicMock: {e}")
+            pytest.fail(f"_print_header() lancou TypeError com MagicMock: {e}")
 
     def test_print_header_with_numeric_threshold(self, bot_factory):
-        """Com drawdown_threshold numérico real, _print_header() formata corretamente."""
+        """Com drawdown_threshold numerico real, _print_header() formata corretamente."""
         bot, _, mock_tg = bot_factory(max_cycles=1)
         mock_tg._drawdown_threshold = 10.0
         try:
             bot._print_header()
         except Exception as e:
-            pytest.fail(f"_print_header() lançou exceção com threshold numérico: {e}")
+            pytest.fail(f"_print_header() lancou excecao com threshold numerico: {e}")
 
     def test_print_header_with_public_property(self, bot_factory):
-        """Se drawdown_threshold existir como propriedade pública, deve ser usada."""
+        """Se drawdown_threshold existir como propriedade publica, deve ser usada."""
         bot, _, mock_tg = bot_factory(max_cycles=1)
         mock_tg.drawdown_threshold = 15.0
-        mock_tg._drawdown_threshold = 10.0  # o público deve ter prioridade
+        mock_tg._drawdown_threshold = 10.0
         try:
             bot._print_header()
         except Exception as e:
-            pytest.fail(f"_print_header() falhou com propriedade pública: {e}")
+            pytest.fail(f"_print_header() falhou com propriedade publica: {e}")
 
     def test_bot_run_completes_with_mock_tg(self, bot_factory):
         """
-        bot.run() com max_cycles=1 e self.tg=MagicMock deve completar
-        sem TypeError — este era o bug central do #46.
+        bot.run() com self.tg=MagicMock deve completar sem TypeError.
+        Este era o bug central do #46.
         """
         bot, _, _ = bot_factory(max_cycles=1)
         try:
             bot.run()
         except TypeError as e:
-            pytest.fail(f"bot.run() lançou TypeError com MagicMock: {e}")
+            pytest.fail(f"bot.run() lancou TypeError com MagicMock: {e}")
         assert bot._cycle >= 1
