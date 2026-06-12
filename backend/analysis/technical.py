@@ -1,9 +1,25 @@
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TechnicalResult:
+    signal: str
+    reason: str
+    rsi: float | None
+    current_price: float | None
+    ema50: float | None
+    macd: float | None
+    macd_signal: float | None
+    bb_upper: float | None
+    bb_lower: float | None
+    atr: float | None
+    price_vs_ema: str | None
 
 
 class TechnicalAnalysis:

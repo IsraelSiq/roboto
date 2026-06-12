@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from .technical import TechnicalAnalysis, TechnicalResult
+from backend.analysis.technical import TechnicalAnalysis, TechnicalResult
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,6 @@ class TechnicalAnalyzer:
         df = df.copy()
         df = TechnicalAnalysis.add_indicators(df)
 
-        # ATR
         df["atr"] = TechnicalAnalysis.atr(df, self.atr_period)
 
         close = df["close"].iloc[-1]
