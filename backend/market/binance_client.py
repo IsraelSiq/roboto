@@ -193,13 +193,13 @@ class BinanceClient:
         if not raw:
             return pd.DataFrame()
 
-        df = pd.DataFrame(raw, columns:[
+        df = pd.DataFrame(raw, columns=[
             "open_time", "open", "high", "low", "close", "volume",
             "close_time", "quote_volume", "trades",
             "taker_buy_base", "taker_buy_quote", "ignore"
         ])
-        df["open_time"]  = pd.to_datetime(df["open_time"],  unit:"ms")
-        df["close_time"] = pd.to_datetime(df["close_time"], unit:"ms")
+        df["open_time"]  = pd.to_datetime(df["open_time"],  unit="ms")
+        df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = df[col].astype(float)
 
@@ -214,6 +214,6 @@ if __name__ == "__main__":
     price = bc.get_price('BTCUSDT')
     print(f"Preço BTC:   ${price:,.2f}")
     print(f"Saldo USDT:  ${bc.get_account_balance('USDT'):,.2f}")
-    df = bc.get_candles(symbol:"BTCUSDT", interval:"5m", limit:5)
+    df = bc.get_candles(symbol="BTCUSDT", interval="5m", limit=5)
     print("\nÚltimos 5 candles BTCUSDT 5m:")
-    print(df.to_string(index:False))
+    print(df.to_string(index=False))
