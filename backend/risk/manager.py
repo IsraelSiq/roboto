@@ -26,7 +26,7 @@ Issue #32:
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone, date
 from typing import Optional
 from uuid import uuid4
@@ -52,7 +52,7 @@ class Trade:
     closed_at: Optional[str] = None
     result: str = "PENDING"     # WIN | LOSS | PENDING
     pnl_pct: Optional[float] = None
-    stop_loss_mode: str = "pct" # 'pct' | 'atr'
+    stop_loss_mode: str = "pct"  # 'pct' | 'atr'
     atr_at_entry: Optional[float] = None
 
     # fix #32: comparação e hash baseados no id único do trade

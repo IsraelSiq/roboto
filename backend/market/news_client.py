@@ -220,9 +220,9 @@ class NewsClient:
                 desc_el    = item.find("description")
                 pubdate_el = item.find("pubDate")
 
-                title   = (title_el.text   or "").strip() if title_el   is not None else ""
-                desc    = (desc_el.text    or "").strip() if desc_el    is not None else ""
-                pub_raw = (pubdate_el.text  or "").strip() if pubdate_el is not None else None
+                title   = (title_el.text or "").strip() if title_el is not None else ""
+                desc    = (desc_el.text or "").strip() if desc_el is not None else ""
+                pub_raw = (pubdate_el.text or "").strip() if pubdate_el is not None else None
 
                 combined = f"{title} {desc}".lower()
                 if not is_generic and kw_lower not in combined:
@@ -245,9 +245,9 @@ class NewsClient:
                     title_el   = item.find("title")
                     desc_el    = item.find("description")
                     pubdate_el = item.find("pubDate")
-                    title   = (title_el.text   or "").strip() if title_el   is not None else ""
-                    desc    = (desc_el.text    or "").strip() if desc_el    is not None else ""
-                    pub_raw = (pubdate_el.text  or "").strip() if pubdate_el is not None else None
+                    title   = (title_el.text or "").strip() if title_el is not None else ""
+                    desc    = (desc_el.text or "").strip() if desc_el is not None else ""
+                    pub_raw = (pubdate_el.text or "").strip() if pubdate_el is not None else None
                     if title:
                         news.append({
                             "title":        title,
