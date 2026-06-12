@@ -30,13 +30,20 @@ from backend.utils.telegram import TelegramAlert
 
 logger = logging.getLogger(__name__)
 
+# fix(#40): expandido para cobrir todos os timeframes aceitos pelo argparse
 INTERVAL_SECONDS = {
-    "1m":  60,
-    "3m":  180,
-    "5m":  300,
-    "15m": 900,
-    "30m": 1800,
-    "1h":  3600,
+    "1m":   60,
+    "3m":   180,
+    "5m":   300,
+    "15m":  900,
+    "30m":  1800,
+    "1h":   3600,
+    "2h":   7200,
+    "4h":   14400,
+    "6h":   21600,
+    "8h":   28800,
+    "12h":  43200,
+    "1d":   86400,
 }
 
 
@@ -241,6 +248,9 @@ class RobotoBot:
         if df is None or df.empty:
             return
 
+        # fix(#42): resetar _df_macro a cada ciclo para evitar dados stale
+        # Se _fetch_macro_candles() falhar, o ciclo usa None em vez do dado antigo
+        self._df_macro = None
         if self.macro_filter.enabled:
             self._df_macro = self._fetch_macro_candles()
 
@@ -423,6 +433,7 @@ class RobotoBot:
             f"ativo ({self.macro_timeframe}) | EMA{self.macro_filter.ema_fast}/EMA{self.macro_filter.ema_slow}"
             if self.macro_filter.enabled else "desativado"
         )
+        # fix(#41/#46): acessar drawdown_threshold via getattr com fallback seguro
         dd_threshold = getattr(self.tg, "drawdown_threshold", None)
         if dd_threshold is None:
             dd_threshold = getattr(self.tg, "_drawdown_threshold", 0)
@@ -443,7 +454,7 @@ class RobotoBot:
         print(f"  Only strong      : {self.risk.only_strong}")
         print(f"  Ciclos           : {self.max_cycles or 'infinito'}")
         print(f"  Sleep            : {self.sleep_seconds}s entre ciclos")
-        print(f"  Notícias/ciclo   : {self.news_limit} (CryptoPanic + RSS)")
+        print(f"  Notícias/ciclo   : {self.news_limit} (cryptocurrency.cv + RSS)")
         print(f"  Supabase         : {'\u2705 conectado' if self.db else '⚠️  offline'}")
         print(f"  Telegram         : {'\u2705 ativo' if self.tg.enabled else '⚠️  desativado (sem token)'}")
         print("="*60 + "\n")
