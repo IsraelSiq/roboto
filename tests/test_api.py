@@ -1,9 +1,14 @@
 """
 Testes — FastAPI endpoints
 """
+import os
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
+
+# Garante que API_TOKEN não está setado durante os testes
+os.environ.pop("API_TOKEN", None)
+
 from backend.api.routes import app
 
 client = TestClient(app)
@@ -55,11 +60,13 @@ class TestAPICandles:
 
 class TestAPIBotControl:
     def test_stop_when_not_running(self):
-        r = client.post("/bot/stop")
+        with patch("backend.api.routes._API_TOKEN", None):
+            r = client.post("/bot/stop")
         assert r.status_code == 200
         assert r.json()["status"] == "not_running"
 
     def test_resume_when_no_bot(self):
-        r = client.post("/bot/resume")
+        with patch("backend.api.routes._API_TOKEN", None):
+            r = client.post("/bot/resume")
         assert r.status_code == 200
         assert r.json()["status"] == "no_bot"

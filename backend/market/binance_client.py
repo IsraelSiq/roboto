@@ -124,12 +124,15 @@ class BinanceClient:
         Estratégia:
           - Testnet  → usa cliente público (testnet klines são esparsos)
           - Real     → usa cliente autenticado
+
+        Qualquer exceção (BinanceAPIException, ConnectionError, timeout, etc.)
+        é capturada e retorna DataFrame vazio para não derrubar o loop do bot.
         """
         try:
             client = self._public_client if self.testnet else self.client
             raw = client.get_klines(symbol=symbol, interval=interval, limit=limit)
             return self._parse_candles(raw)
-        except BinanceAPIException as e:
+        except Exception as e:
             logger.error(f"Erro ao buscar candles de {symbol}: {e}")
             return pd.DataFrame()
 

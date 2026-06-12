@@ -87,7 +87,6 @@ class TestBotLoopBasic:
     def test_stop_flag_ends_loop(self, bot_factory):
         """bot.stop() deve encerrar o loop mesmo com max_cycles alto."""
         bot, _, _, _ = bot_factory(max_cycles=1000)
-        # Para o bot antes de rodar (simula stop externo)
         import threading
         import time
 
@@ -104,7 +103,9 @@ class TestBotLoopBasic:
 class TestBotLoopNoDB:
     def test_no_db_does_not_call_supabase(self, bot_factory):
         """use_db=False nao deve instanciar SupabaseClient."""
-        with patch("backend.core.bot.SupabaseClient") as mock_db_cls:
+        # SupabaseClient é importado lazy dentro de _get_db() em bot.py,
+        # por isso patchamos no módulo original, não em backend.core.bot
+        with patch("backend.db.supabase_client.SupabaseClient") as mock_db_cls:
             bot, _, _, _ = bot_factory(max_cycles=1, use_db=False)
             bot.run()
             mock_db_cls.assert_not_called()
@@ -119,8 +120,6 @@ class TestBotLoopSignalStrength:
         """
         bot, _, _, _ = bot_factory(max_cycles=2, only_strong=True)
         bot.run()
-        # Nao deve haver trades abertos com sinal fraco
-        # (pode haver 0 trades dependendo dos candles sinteticos)
         assert bot.risk.balance > 0
 
     def test_only_strong_false_accepts_weak(self, bot_factory):
@@ -136,12 +135,10 @@ class TestBotLoopDrawdown:
         Simula drawdown maximo: forca balance baixo e verifica pausa.
         """
         bot, _, _, _ = bot_factory(max_cycles=1, balance=1000.0)
-        # Forca drawdown alto manualmente
         bot.risk._balance = 700.0  # -30% a partir de 1000
         bot.risk._initial_balance = 1000.0
-        # Valida que o risk manager detecta o drawdown
         status = bot.risk.status()
-        assert status["drawdown_pct"] >= 0  # drawdown calculado
+        assert status["drawdown_pct"] >= 0
 
 
 class TestBotLoopTelegram:

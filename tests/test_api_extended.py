@@ -78,11 +78,9 @@ class TestAPITrades:
 class TestAPIBotStart:
     def test_bot_start_creates_thread(self, client):
         import threading
-        started_threads = []
 
-        real_thread_init = threading.Thread.__init__
-
-        with patch("backend.api.routes._bot", None), \
+        with patch("backend.api.routes._API_TOKEN", None), \
+             patch("backend.api.routes._bot", None), \
              patch("backend.api.routes._bot_thread", None), \
              patch("backend.core.bot.BinanceClient"), \
              patch("backend.core.bot.SentimentAnalyzer"), \
@@ -111,7 +109,8 @@ class TestAPIBotStart:
         mock_bot = MagicMock()
         mock_bot._running = True
         mock_bot.symbol = "BTCUSDT"
-        with patch("backend.api.routes._bot", mock_bot):
+        with patch("backend.api.routes._API_TOKEN", None), \
+             patch("backend.api.routes._bot", mock_bot):
             r = client.post("/bot/start", json={
                 "symbol": "BTCUSDT", "interval": "5m",
                 "balance": 10000.0, "only_strong": True,

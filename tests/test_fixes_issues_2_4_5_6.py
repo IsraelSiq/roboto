@@ -55,6 +55,7 @@ def make_tech(signal="PUT", rsi=35.0, price=75_000.0):
     t.price_vs_ema = "BELOW"
     t.price_vs_bb = "MIDDLE"
     t.reason = "mock"
+    t.atr = None  # fix: evita MagicMock.__format__ em signals.py summary()
     return t
 
 
