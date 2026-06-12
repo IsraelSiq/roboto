@@ -143,3 +143,7 @@ class TechnicalAnalysis:
         df["atr_stop"] = df["atr_14"] * atr_multiplier
 
         return df
+
+
+# Re-export para compatibilidade com os testes
+from backend.analysis.technical_analyzer import TechnicalAnalyzer  # noqa: E402,F401
