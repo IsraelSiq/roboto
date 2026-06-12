@@ -418,6 +418,16 @@ class RobotoBot:
             f"ativo ({self.macro_timeframe}) | EMA{self.macro_filter.ema_fast}/EMA{self.macro_filter.ema_slow}"
             if self.macro_filter.enabled else "desativado"
         )
+        # fix #46: usa propriedade pública drawdown_threshold com fallback seguro
+        # evita TypeError quando self.tg é MagicMock sem spec em testes
+        dd_threshold = getattr(self.tg, "drawdown_threshold", None)
+        if dd_threshold is None:
+            dd_threshold = getattr(self.tg, "_drawdown_threshold", 0)
+        try:
+            dd_str = f"{float(dd_threshold):.0f}%"
+        except (TypeError, ValueError):
+            dd_str = "N/A"
+
         print("\n" + "="*60)
         print(f"  🤖 Roboto — {self.symbol} {self.interval}")
         print(f"  Saldo inicial    : ${self.risk.initial_balance:,.2f}")
@@ -426,7 +436,7 @@ class RobotoBot:
         print(f"  Max trades/dia   : {self.risk.max_trades_day}")
         print(f"  Max drawdown     : {self.risk.max_drawdown_pct}%")
         print(f"  Circuit breaker  : {self.risk.max_consecutive_losses} perdas consecutivas")
-        print(f"  Drawdown alerta  : {self.tg._drawdown_threshold:.0f}% (Telegram)")
+        print(f"  Drawdown alerta  : {dd_str} (Telegram)")
         print(f"  Only strong      : {self.risk.only_strong}")
         print(f"  Ciclos           : {self.max_cycles or 'infinito'}")
         print(f"  Sleep            : {self.sleep_seconds}s entre ciclos")

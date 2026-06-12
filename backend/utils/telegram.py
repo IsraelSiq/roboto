@@ -46,6 +46,11 @@ class TelegramAlert:
         if not self.enabled:
             logger.info("[Telegram] Não configurado. Alertas desativados.")
 
+    @property
+    def drawdown_threshold(self) -> float:
+        """Threshold de drawdown para alerta (fix #46 — exposto como propriedade pública)."""
+        return self._drawdown_threshold
+
     def send(self, message: str, silent: bool = False) -> bool:
         if not self.enabled:
             return False
