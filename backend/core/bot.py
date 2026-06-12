@@ -289,6 +289,15 @@ class RobotoBot:
             logger.error(f"[Monitor] Erro ao obter preço: {e}")
             return
 
+        # fix #33: get_price() retorna Optional[float] — guard contra None
+        # evita TypeError em check_exit() e close_trade() ao comparar com float
+        if current_price is None:
+            logger.error(
+                f"[Monitor] get_price({self.symbol}) retornou None — "
+                "ciclo de monitoramento ignorado (falha na Binance)"
+            )
+            return
+
         exit_reason = self.risk.check_exit(trade, current_price)
         if exit_reason:
             self.risk.close_trade(trade, current_price)
