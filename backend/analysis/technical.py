@@ -20,6 +20,7 @@ class TechnicalResult:
     bb_lower: float | None = None
     atr: float | None = None
     price_vs_ema: str | None = None
+    macd_cross: str | None = None
 
 
 class TechnicalAnalysis:

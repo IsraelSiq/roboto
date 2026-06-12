@@ -98,8 +98,8 @@ class SignalCombiner:
 
     def __init__(
         self,
-        symbol: str,
-        timeframe: str,
+        symbol: str = "BTCUSDT",
+        timeframe: str = "5m",
         only_strong: bool = False,
         macro_filter: Any = None,
     ):
@@ -127,6 +127,12 @@ class SignalCombiner:
 
         if "fallback" in (sentiment.source or "").lower():
             logger.warning("FALLBACK de sentimento ativo: %s", sentiment.source)
+
+        # aplica macro filter se existir e sinal não for AGUARDAR
+        if self.macro_filter is not None and tech.signal != "AGUARDAR":
+            allowed = self.macro_filter(tech=tech, sentiment=sentiment)
+            if allowed is False:
+                final = AGUARDAR
 
         # confiança simples baseada no score de sentimento
         base_score = min(max(sentiment.score, 0.0), 1.0)
