@@ -1,13 +1,14 @@
 """
 Roboto — Supabase Client
-Persiste sinais, trades, sessões e cache de notícias no banco.
+Persiste sinais, trades, sessões, cache de notícias e impacto de notícias.
 
-Tabelas utilizadas (conforme schema real do projeto):
-    signals      — sinais gerados a cada ciclo
-    trades       — trades abertos/fechados
-    bot_sessions — sessões do bot
-    news_cache   — notícias já processadas pelo FinBERT (com TTL, #15)
-    backtest_runs— resultados de backtests (Fase 8)
+Tabelas utilizadas:
+    signals       — sinais gerados a cada ciclo
+    trades        — trades abertos/fechados
+    bot_sessions  — sessões do bot
+    news_cache    — notícias já processadas pelo FinBERT (com TTL, #15)
+    backtest_runs — resultados de backtests
+    news_impact   — histórico de notícias + impacto no preço (#51/#52)
 """
 
 import logging
@@ -172,18 +173,6 @@ class SupabaseClient:
     ) -> list[dict]:
         """
         Retorna notícias recentes do cache Supabase dentro do TTL.
-
-        Filtra por `created_at > now() - ttl_minutes` no lado do cliente
-        (compatível com qualquer tier do Supabase sem precisar de RPC).
-
-        Args:
-            symbol:      Símbolo do ativo (ex: 'BTCUSDT')
-            ttl_minutes: Janela de validade do cache em minutos (padrão: 15)
-            limit:       Máximo de notícias a retornar (padrão: 10)
-
-        Returns:
-            Lista de dicts com title/description/sentiment/score,
-            ou lista vazia se cache expirado/vazio.
         """
         try:
             cutoff = (
@@ -212,8 +201,6 @@ class SupabaseClient:
     def cache_news(self, symbol: str, articles: list):
         """
         Salva notícias processadas no cache para evitar reprocessamento.
-        `articles` é lista de dicts com title, description, source, url,
-        sentiment e score (preenchidos após análise do FinBERT).
         """
         try:
             rows = [
@@ -234,16 +221,11 @@ class SupabaseClient:
             logger.error(f"[Supabase] Erro ao cachear notícias: {e}")
 
     # ----------------------------------------------------------
-    # BACKTEST RUNS (Fase 8)
+    # BACKTEST RUNS
     # ----------------------------------------------------------
 
     def save_backtest(self, result: dict) -> Optional[str]:
-        """
-        Persiste o resultado de um backtest.
-        Campos: symbol, timeframe, period_start, period_end,
-                total_trades, win_rate, profit_factor,
-                max_drawdown, sharpe_ratio, approved, notes
-        """
+        """Persiste o resultado de um backtest."""
         try:
             res = self.client.table("backtest_runs").insert(result).execute()
             run_id = res.data[0]["id"]
@@ -266,4 +248,165 @@ class SupabaseClient:
             return res.data
         except Exception as e:
             logger.error(f"[Supabase] Erro ao buscar backtests: {e}")
+            return []
+
+    # ----------------------------------------------------------
+    # NEWS IMPACT (#51 / #52 / #53)
+    # ----------------------------------------------------------
+
+    def insert_news_impact(self, payload: dict) -> bool:
+        """
+        Insere um registro na tabela news_impact.
+        Usa upsert por news_id para evitar duplicatas.
+
+        Args:
+            payload: Dict com os campos da tabela news_impact
+                     (news_id, symbol, keyword, title, source,
+                      published_at, collected_at, sentiment_signal,
+                      sentiment_score, price_at_news)
+
+        Returns:
+            True se inserido, False se duplicata silenciosa ou erro
+        """
+        try:
+            self.client.table("news_impact").upsert(
+                payload,
+                on_conflict="news_id",
+                ignore_duplicates=True,
+            ).execute()
+            return True
+        except Exception as e:
+            logger.error(f"[Supabase] Erro ao inserir news_impact: {e}")
+            return False
+
+    def update_news_impact(self, row_id: str, patch: dict) -> bool:
+        """
+        Atualiza campos de impacto de um registro news_impact pelo UUID.
+
+        Args:
+            row_id: UUID do registro (campo 'id')
+            patch:  Dict com campos a atualizar (ex: price_1h, impact_pct_1h)
+
+        Returns:
+            True se atualizado com sucesso
+        """
+        try:
+            self.client.table("news_impact").update(patch).eq("id", row_id).execute()
+            return True
+        except Exception as e:
+            logger.error(f"[Supabase] Erro ao atualizar news_impact {row_id}: {e}")
+            return False
+
+    def get_news_impact_pending_backfill(
+        self,
+        symbol: str,
+        limit: int = 50,
+    ) -> list[dict]:
+        """
+        Retorna registros de news_impact onde price_1h ainda é NULL.
+        Usado pelo NewsImpactCollector.backfill_impacts().
+
+        Args:
+            symbol: Filtrar pelo símbolo (ex: 'BNBUSDT')
+            limit:  Máximo de registros a retornar
+
+        Returns:
+            Lista de dicts com id, collected_at, price_at_news, sentiment_signal
+        """
+        try:
+            res = (
+                self.client.table("news_impact")
+                .select("id, collected_at, price_at_news, sentiment_signal")
+                .eq("symbol", symbol)
+                .is_("price_1h", "null")
+                .order("collected_at", desc=False)
+                .limit(limit)
+                .execute()
+            )
+            return res.data or []
+        except Exception as e:
+            logger.error(f"[Supabase] Erro ao buscar news_impact pendentes: {e}")
+            return []
+
+    def get_similar_news_impacts(
+        self,
+        symbol: str,
+        sentiment_signal: str,
+        score_min: float,
+        score_max: float,
+        horizon: str = "1h",
+        limit: int = 100,
+    ) -> list[dict]:
+        """
+        Retorna registros históricos de news_impact que correspondem a:
+        - mesmo symbol
+        - mesmo sentiment_signal
+        - sentiment_score entre score_min e score_max
+        - impact_pct_{horizon} preenchido (não NULL)
+
+        Usado pelo NewsImpactAnalyzer para calcular impact_score.
+
+        Args:
+            symbol:           Símbolo do ativo (ex: 'BNBUSDT')
+            sentiment_signal: 'positive' | 'negative' | 'neutral'
+            score_min:        Limite inferior do sentiment_score
+            score_max:        Limite superior do sentiment_score
+            horizon:          '1h' | '4h' | '24h'
+            limit:            Máximo de registros
+
+        Returns:
+            Lista de dicts com impact_pct_{horizon}, sentiment_score,
+            direction_confirmed_1h, collected_at
+        """
+        impact_col = f"impact_pct_{horizon}"
+        try:
+            res = (
+                self.client.table("news_impact")
+                .select(
+                    f"id, sentiment_score, {impact_col}, "
+                    "direction_confirmed_1h, collected_at"
+                )
+                .eq("symbol", symbol)
+                .eq("sentiment_signal", sentiment_signal)
+                .gte("sentiment_score", round(score_min, 4))
+                .lte("sentiment_score", round(score_max, 4))
+                .not_.is_(impact_col, "null")
+                .order("collected_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return res.data or []
+        except Exception as e:
+            logger.error(f"[Supabase] Erro ao buscar similar news impacts: {e}")
+            return []
+
+    def get_news_impact_stats(
+        self,
+        symbol: str,
+        limit: int = 200,
+    ) -> list[dict]:
+        """
+        Retorna todos os registros de news_impact com impacto preenchido.
+        Útil para análise exploratória e dashboards.
+
+        Args:
+            symbol: Símbolo a filtrar
+            limit:  Máximo de registros
+
+        Returns:
+            Lista de dicts com todos os campos da tabela
+        """
+        try:
+            res = (
+                self.client.table("news_impact")
+                .select("*")
+                .eq("symbol", symbol)
+                .not_.is_("impact_pct_1h", "null")
+                .order("collected_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return res.data or []
+        except Exception as e:
+            logger.error(f"[Supabase] Erro ao buscar news_impact stats: {e}")
             return []
