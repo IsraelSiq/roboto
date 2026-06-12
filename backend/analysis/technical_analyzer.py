@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 class TechnicalAnalyzer:
     min_candles: int = 60
     atr_period: int = 14
+    # thresholds usados pelos testes de issues #4/#6
+    rsi_call_threshold: float = 55.0
+    rsi_put_threshold: float = 45.0
 
     def analyze(self, df: pd.DataFrame) -> TechnicalResult:
         if len(df) < self.min_candles:
@@ -50,8 +53,16 @@ class TechnicalAnalyzer:
         else:
             price_vs_ema = "AT"
 
+        # lógica simples para emitir CALL/PUT/AGUARDAR baseada em RSI
+        if rsi > self.rsi_call_threshold:
+            signal = "CALL"
+        elif rsi < self.rsi_put_threshold:
+            signal = "PUT"
+        else:
+            signal = "AGUARDAR"
+
         return TechnicalResult(
-            signal="AGUARDAR",
+            signal=signal,
             reason="Análise técnica calculada",
             rsi=float(rsi),
             current_price=float(close),

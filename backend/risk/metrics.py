@@ -29,10 +29,7 @@ class MetricsResult:
 
 
 class PerformanceMetrics:
-    """Calcula métricas básicas de performance a partir de uma lista de trades.
-
-    Os testes só exigem métricas agregadas sobre pnl_pct e result.
-    """
+    """Calcula métricas básicas de performance a partir de uma lista de trades."""
 
     def __init__(self, trades: List):
         self.trades = [t for t in trades if not t.is_open()]
