@@ -495,7 +495,7 @@ class RobotoBot:
 
         impact_str = "✅ ativo" if self.impact_collector else "⚠️  desativado"
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print(f"  🤖 Roboto — {self.symbol} {self.interval}")
         print(f"  Saldo inicial    : ${self.risk.initial_balance:,.2f}")
         print(f"  SL / TP          : {sl_mode_str}")
@@ -511,14 +511,14 @@ class RobotoBot:
         print(f"  NewsImpact       : {impact_str}")
         print(f"  Supabase         : {'✅ conectado' if self.db else '⚠️  offline'}")
         print(f"  Telegram         : {'✅ ativo' if self.tg.enabled else '⚠️  desativado (sem token)'}")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
     def _print_metrics(self):
         trades = self.risk.closed_trades
         status = self.risk.status()
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("  📊 Resumo Final")
-        print("="*60)
+        print("=" * 60)
         print(f"  Saldo final         : ${status['balance']:,.2f}")
         print(f"  Drawdown atual      : {status['drawdown_pct']:.1f}%")
         print(f"  Perdas consecutivas : {status['consecutive_losses']}/{status['max_consecutive_losses']}")
@@ -530,7 +530,7 @@ class RobotoBot:
             print(result.summary())
         else:
             print("  Nenhum trade fechado nesta sessão.")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
 
 # ----------------------------------------------------------
