@@ -1,11 +1,3 @@
-import argparse
-import json
-import logging
-
-from backend.backtest.data_loader import BacktestDataLoader
-from backend.backtest.engine import BacktestEngine
-from backend.backtest.report import BacktestReporter
-
 """
 Roboto — Backtest Runner
 
@@ -24,6 +16,14 @@ SL/TP padrões por timeframe (Risk:Reward 1:2):
     1h  → SL=2.5%  TP=5.0%
     4h  → SL=4.0%  TP=8.0%
 """
+
+import argparse
+import json
+import logging
+
+from backend.backtest.data_loader import BacktestDataLoader
+from backend.backtest.engine import BacktestEngine
+from backend.backtest.report import BacktestReporter
 
 logging.basicConfig(
     level=logging.INFO,
