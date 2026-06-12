@@ -9,9 +9,10 @@ Arquitetura:
     - Singleton global _FINBERT_PIPELINE: compartilhado entre instâncias (#14)
     - Cache em memória por instância (TTL configurável, padrão: 300s)
     - Cache Supabase: consulta news_cache antes de chamar NewsClient+FinBERT (#15)
-    - Integração com NewsClient (CryptoPanic + RSS fallback)
+    - Integração com NewsClient (cryptocurrency.cv + RSS fallback)
+    - Expõe self.last_news com a lista bruta de notícias (#52)
 
-Hierárquia de cache em get_news_sentiment() (#15):
+Hieraráquia de cache em get_news_sentiment() (#15):
     1. Cache memória (in-process, TTL=300s por padrão)
     2. Cache Supabase news_cache (TTL=NEWS_CACHE_TTL_MINUTES, padrão 15min)
     3. NewsClient + FinBERT (fonte primária, resultado persiste no Supabase)
@@ -36,6 +37,9 @@ Uso:
     print(result.score)       # 0.0 a 1.0
     print(result.source)      # origem do resultado
     print(result.raw_scores)  # {'positive': 0.82, 'negative': 0.10, 'neutral': 0.08}
+
+    # Acesso às notícias brutas após chamada (para NewsImpactCollector #52):
+    print(analyzer.last_news)  # lista de dicts com title, published_at, source
 """
 
 import logging
@@ -92,6 +96,13 @@ class SentimentAnalyzer:
         min_confidence: Score mínimo para considerar o sinal (padrão: 0.6)
         max_headlines:  Máximo de manchetes a analisar por chamada (padrão: 10)
         cache_ttl:      Tempo de vida do cache em memória em segundos (padrão: 300)
+
+    Atributos públicos:
+        last_news (list[dict]): Lista bruta de notícias da última chamada a
+            get_news_sentiment() via NewsClient (path principal, não cache).
+            Cada dict contém title, description, published_at, source.
+            Vazia se o resultado veio do cache Supabase ou memória.
+            Usada pelo NewsImpactCollector (#52) para persistir cada notícia.
     """
 
     def __init__(
@@ -108,6 +119,10 @@ class SentimentAnalyzer:
         self._cache: dict[str, tuple[SentimentResult, float]] = {}
         self._news_client = None
         self._db = None  # SupabaseClient lazy (#15)
+
+        # Lista bruta de notícias da última chamada via NewsClient (#52)
+        # Atualizada apenas quando o path real (NewsClient+FinBERT) é executado
+        self.last_news: list[dict] = []
 
     # ----------------------------------------------------------
     # Propriedades públicas (#14)
@@ -322,10 +337,13 @@ class SentimentAnalyzer:
 
         Hierarquia de cache (#15):
             1. Cache Supabase (TTL=NEWS_CACHE_TTL_MINUTES) — evita NewsClient+FinBERT
-            2. NewsClient (CryptoPanic + RSS fallback) + FinBERT
+            2. NewsClient (cryptocurrency.cv + RSS fallback) + FinBERT
             3. Persiste resultado novo em news_cache para próximos ciclos
 
         Graceful degradation: se Supabase offline, flui direto para NewsClient.
+
+        Atualiza self.last_news com a lista bruta (path NewsClient) para uso
+        pelo NewsImpactCollector (#52). Permanece [] se veio do cache.
 
         Args:
             keyword:    Palavra-chave de busca (ex: 'bitcoin', 'bnb')
@@ -335,6 +353,9 @@ class SentimentAnalyzer:
         """
         limit = news_limit if page_size is None else page_size
         cache_symbol = symbol or keyword.upper()
+
+        # Limpa last_news antes de cada chamada
+        self.last_news = []
 
         # --- 1. Tenta cache Supabase (#15) ---
         db = self._get_db()
@@ -373,6 +394,7 @@ class SentimentAnalyzer:
                         f"[NewsCache] Hit Supabase para '{cache_symbol}': "
                         f"{total} notícias → {signal} ({avg_score:.4f})"
                     )
+                    # last_news permanece [] — dados já persistidos no ciclo anterior
                     return SentimentResult(
                         signal=signal,
                         score=round(avg_score, 4),
@@ -391,6 +413,9 @@ class SentimentAnalyzer:
         try:
             client = self._get_news_client()
             news_list = client.get_news(keyword=keyword, limit=limit)
+
+            # Expoe para o NewsImpactCollector (#52)
+            self.last_news = news_list
 
             if not news_list:
                 logger.warning(
